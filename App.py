@@ -44,27 +44,26 @@ ALL_COLUMNS = ['Player Name', 'March Size'] + KNOWN_STATS + [
 
 TOTAL_ROWS = 100
 
-# ── Init ALL session state keys upfront ──
-defaults = {
-    'df': pd.DataFrame(columns=ALL_COLUMNS),
-    'roster': [],
-    'extracted': None,
-    'upload_key': 0,
-    'add_msg': None,
-    'kick_msg': None,
-    'save_msg': None,
-    'radio_player': '-- select player --',  # persists player selection in tab2
-}
-for k, v in defaults.items():
-    if k not in st.session_state:
-        st.session_state[k] = v
+# ── Init session state ONCE ──
+if 'df' not in st.session_state:
+    st.session_state.df = pd.DataFrame(columns=ALL_COLUMNS)
+if 'roster' not in st.session_state:
+    st.session_state.roster = []
+if 'extracted' not in st.session_state:
+    st.session_state.extracted = None
+if 'upload_key' not in st.session_state:
+    st.session_state.upload_key = 0
+if 'add_msg' not in st.session_state:
+    st.session_state.add_msg = None
+if 'kick_msg' not in st.session_state:
+    st.session_state.kick_msg = None
+if 'save_msg' not in st.session_state:
+    st.session_state.save_msg = None
+# THIS is the only player selection variable — owned entirely by st.radio via key=
+if 'radio_player' not in st.session_state:
+    st.session_state.radio_player = '-- select player --'
 
-# Normalize roster every run
-st.session_state.roster = sorted(set(
-    s.strip() for s in st.session_state.roster if str(s).strip()
-))
-
-# ── OCR / extract ──
+# ── Helpers ──
 def ocr_image(img):
     return pytesseract.image_to_string(img, config='--psm 6')
 
@@ -198,6 +197,31 @@ def load_excel(file):
         roster = df['Player Name'].dropna().astype(str).str.strip().tolist()
     return df, roster
 
+# ── Tab 1 callbacks — run BEFORE render, session state already committed ──
+def cb_add():
+    name = st.session_state.get('inp_add', '').strip()
+    if not name:
+        st.session_state.add_msg = ('warning', 'Type a name first.')
+    elif any(name.lower() == n.lower() for n in st.session_state.roster):
+        st.session_state.add_msg = ('warning', f"'{name}' is already in the roster.")
+    else:
+        st.session_state.roster = sorted(st.session_state.roster + [name])
+        st.session_state.add_msg = ('success', f"✅ '{name}' added to roster!")
+
+def cb_kick():
+    to_kick = st.session_state.get('sel_kick', '-- select --')
+    if to_kick == '-- select --':
+        st.session_state.kick_msg = ('warning', 'Select a player first.')
+    else:
+        st.session_state.roster = [n for n in st.session_state.roster if n.lower() != to_kick.lower()]
+        if 'Player Name' in st.session_state.df.columns:
+            st.session_state.df = st.session_state.df[
+                st.session_state.df['Player Name'].astype(str).str.strip().str.lower() != to_kick.lower()
+            ].reset_index(drop=True)
+        if st.session_state.radio_player == to_kick:
+            st.session_state.radio_player = '-- select player --'
+        st.session_state.kick_msg = ('success', f"✅ '{to_kick}' removed.")
+
 # ══════════════════════════════════════════
 # TABS
 # ══════════════════════════════════════════
@@ -229,19 +253,9 @@ with tab1:
         else:
             st.warning(txt)
 
-    with st.form("form_add"):
-        new_name = st.text_input("Player name", placeholder="Type name here")
-        if st.form_submit_button("➕ Add to Roster"):
-            name = new_name.strip()
-            if not name:
-                st.session_state.add_msg = ('warning', 'Type a name first.')
-            elif name.lower() in [n.lower() for n in st.session_state.roster]:
-                st.session_state.add_msg = ('warning', f"'{name}' is already in the roster.")
-            else:
-                st.session_state.roster = sorted(set(
-                    st.session_state.roster + [name]
-                ))
-                st.session_state.add_msg = ('success', f"✅ '{name}' added to roster!")
+    # on_click callback reads inp_add from session_state BEFORE rerender
+    st.text_input("Player name", placeholder="Type name here", key="inp_add")
+    st.button("➕ Add to Roster", on_click=cb_add)
 
     st.divider()
     st.subheader("Remove (Kick) Player")
@@ -255,21 +269,8 @@ with tab1:
             st.warning(txt)
 
     if st.session_state.roster:
-        with st.form("form_kick"):
-            to_kick = st.selectbox("Select player to remove", ["-- select --"] + st.session_state.roster)
-            if st.form_submit_button("🗑️ Remove & Delete Their Data"):
-                if to_kick == "-- select --":
-                    st.session_state.kick_msg = ('warning', 'Select a player first.')
-                else:
-                    st.session_state.roster = [n for n in st.session_state.roster
-                                               if n.lower() != to_kick.lower()]
-                    if 'Player Name' in st.session_state.df.columns:
-                        st.session_state.df = st.session_state.df[
-                            st.session_state.df['Player Name'].astype(str).str.strip().str.lower() != to_kick.lower()
-                        ].reset_index(drop=True)
-                    if st.session_state.get('radio_player','') == to_kick:
-                        st.session_state.radio_player = '-- select player --'
-                    st.session_state.kick_msg = ('success', f"✅ '{to_kick}' removed.")
+        st.selectbox("Select player to remove", ["-- select --"] + st.session_state.roster, key="sel_kick")
+        st.button("🗑️ Remove & Delete Their Data", on_click=cb_kick)
     else:
         st.info("No players in roster yet.")
 
@@ -299,10 +300,11 @@ with tab2:
 
         st.subheader("Select Player")
 
-        # radio_player key persists via Streamlit session state automatically.
-        # We only ever write to it here if the value is no longer valid (kicked player).
         valid_options = ['-- select player --'] + roster
-        if st.session_state.get('radio_player', '-- select player --') not in valid_options:
+
+        # ONLY reset if current value is not in the list (e.g. player was kicked)
+        # Never reset it otherwise — key= owns the value
+        if st.session_state.radio_player not in valid_options:
             st.session_state.radio_player = '-- select player --'
 
         st.radio(
@@ -319,7 +321,7 @@ with tab2:
             if player_name in existing:
                 st.warning(f"⚠️ {player_name} already has data — saving will **replace** it.")
             else:
-                st.info(f"Selected: **{player_name}**")
+                st.info(f"✅ Selected: **{player_name}**")
 
         st.divider()
         st.subheader("Upload Screenshots")
@@ -347,7 +349,8 @@ with tab2:
                 slot.write(f"Reading {i+1}/{len(screenshots)}...")
                 all_text += "\n" + ocr_image(Image.open(f))
                 bar.progress((i+1)/len(screenshots))
-            slot.empty(); bar.empty()
+            slot.empty()
+            bar.empty()
             st.session_state.extracted = extract_all(all_text)
             st.session_state.extracted['_player'] = player_name
             n = len(st.session_state.extracted) - 1
