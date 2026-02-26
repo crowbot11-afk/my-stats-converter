@@ -322,10 +322,10 @@ with tab2:
         if st.session_state.chosen_player not in roster:
             st.session_state.chosen_player = ''
 
-        # Render a button per player — clicking sets chosen_player in session state
-        for p in roster:
+        # Use index-based keys so new players don't cause key-not-found resets
+        for i, p in enumerate(roster):
             is_selected = (p == st.session_state.chosen_player)
-            if st.button(p, key=f"btn_{p}", type="primary" if is_selected else "secondary"):
+            if st.button(p, key=f"btn_p_{i}", type="primary" if is_selected else "secondary"):
                 st.session_state.chosen_player = p
 
         # Read AFTER buttons so we get the value set by the click above
