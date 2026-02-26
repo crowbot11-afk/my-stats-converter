@@ -105,7 +105,8 @@ def load_persisted():
                 payload = json.load(f)
             roster = payload.get("roster", [])
             records = payload.get("df", [])
-            df = pd.DataFrame(records, columns=ALL_COLUMNS) if records else pd.DataFrame(columns=ALL_COLUMNS)
+            df = pd.DataFrame(records, columns=ALL_COLUMNS)\
+                if records else pd.DataFrame(columns=ALL_COLUMNS)
             for col in ALL_COLUMNS:
                 if col not in df.columns:
                     df[col] = 0
@@ -290,7 +291,9 @@ with tab1:
         st.session_state.last_loaded_file = uploaded.name
         persist()
         st.success("Loaded " + str(len(df)) + " players, " + str(len(roster)) + " in roster.")
-    st.info(str(len(st.session_state.df)) + " players with data / " + str(len(st.session_state.roster)) + " in roster")
+    n_data = str(len(st.session_state.df))
+    n_roster = str(len(st.session_state.roster))
+    st.info(n_data + " players with data / " + n_roster + " in roster")
     st.divider()
     st.subheader("Roster Management")
     col_add, col_kick = st.columns(2)
@@ -311,15 +314,20 @@ with tab1:
     with col_kick:
         st.markdown("**Remove Player**")
         if st.session_state.roster:
-            to_kick = st.selectbox("Player to remove", ["-- select --"] + st.session_state.roster, label_visibility="collapsed")
+            kick_opts = ["-- select --"] + st.session_state.roster
+            to_kick = st.selectbox("Player to remove", kick_opts, label_visibility="collapsed")
             if st.button("Remove and Delete Data", use_container_width=True):
                 if to_kick == "-- select --":
                     st.session_state.kick_msg = ("warning", "Select a player first.")
                 else:
-                    st.session_state.roster = [n for n in st.session_state.roster if n.lower() != to_kick.lower()]
-                    st.session_state.df = st.session_state.df[
-                        st.session_state.df["Player Name"].astype(str).str.strip().str.lower() != to_kick.lower()
-                    ].reset_index(drop=True)
+                    st.session_state.roster = [
+                        n for n in st.session_state.roster
+                        if n.lower() != to_kick.lower()
+                    ]
+                    _kick_lower = to_kick.lower()
+                    _df_mask = st.session_state.df["Player Name"].astype(str)\
+                        .str.strip().str.lower() != _kick_lower
+                    st.session_state.df = st.session_state.df[_df_mask].reset_index(drop=True)
                     if st.session_state.chosen_player.lower() == to_kick.lower():
                         st.session_state.chosen_player = ""
                     persist()
@@ -349,7 +357,10 @@ with tab2:
             _cur_idx = _opts.index(st.session_state.chosen_player)
         else:
             _cur_idx = 0
-        selected = st.selectbox("Select player", options=_opts, index=_cur_idx, key="_sel_player_box")
+        selected = st.selectbox(
+            "Select player", options=_opts,
+            index=_cur_idx, key="_sel_player_box"
+        )
         if selected == "-- select player --":
             st.session_state.chosen_player = ""
         else:
@@ -357,7 +368,8 @@ with tab2:
         player_name = st.session_state.chosen_player
         if player_name:
             df_check = st.session_state.df
-            mask = df_check["Player Name"].astype(str).str.strip().str.lower() == player_name.strip().lower()
+            _pn_lower = player_name.strip().lower()
+            mask = df_check["Player Name"].astype(str).str.strip().str.lower() == _pn_lower
             if mask.any():
                 row = df_check[mask].iloc[0]
                 stat_cols = [c for c in ALL_COLUMNS if c != "Player Name"]
@@ -409,7 +421,11 @@ with tab2:
         can_extract = has_player and has_shots
         col_a, col_b = st.columns([2, 1])
         with col_a:
-            do_extract = st.button("Extract Stats", disabled=not can_extract, use_container_width=True)
+            do_extract = st.button(
+                "Extract Stats",
+                disabled=not can_extract,
+                use_container_width=True
+            )
         with col_b:
             if st.button("Clear", use_container_width=True):
                 st.session_state.upload_key += 1
@@ -433,17 +449,26 @@ with tab2:
             st.session_state.extracted["_player"] = player_name
             n = len([k for k in st.session_state.extracted if k != "_player"])
             st.success(str(n) + " fields extracted for " + player_name)
-            stats_found = {k: st.session_state.extracted[k] for k in KNOWN_STATS if k in st.session_state.extracted}
+            stats_found = {
+                k: st.session_state.extracted[k]
+                for k in KNOWN_STATS
+                if k in st.session_state.extracted
+            }
             build_keys = [
                 "March Size", "Elder Titan Tier", "Titan Talent Level", "Beast Tier",
                 "Beast Talent Level", "Beast Skill Level", "Totem Level",
                 "Special Stats Level", "Jewels Level", "Zodiac Green", "Zodiac White",
                 "Northern Green", "Colossus Level", "Emblem Level"
             ]
-            build_found = {k: st.session_state.extracted[k] for k in build_keys if k in st.session_state.extracted}
+            build_found = {
+                k: st.session_state.extracted[k]
+                for k in build_keys
+                if k in st.session_state.extracted
+            }
             st.markdown("**Build Info**")
             if build_found:
-                st.dataframe(pd.DataFrame(list(build_found.items()), columns=["Field", "Value"]), use_container_width=True)
+                _bdf = pd.DataFrame(list(build_found.items()), columns=["Field", "Value"])
+                st.dataframe(_bdf, use_container_width=True)
             else:
                 st.caption("No build info found in screenshots.")
             st.markdown("**Stats Bonus**")
@@ -452,9 +477,11 @@ with tab2:
                 half = len(items) // 2 + len(items) % 2
                 ca, cb = st.columns(2)
                 with ca:
-                    st.dataframe(pd.DataFrame(items[:half], columns=["Stat", "Value"]), use_container_width=True)
+                    _df1 = pd.DataFrame(items[:half], columns=["Stat", "Value"])
+                    st.dataframe(_df1, use_container_width=True)
                 with cb:
-                    st.dataframe(pd.DataFrame(items[half:], columns=["Stat", "Value"]), use_container_width=True)
+                    _df2 = pd.DataFrame(items[half:], columns=["Stat", "Value"])
+                    st.dataframe(_df2, use_container_width=True)
                 st.info(str(len(stats_found)) + "/47 stats found")
             else:
                 st.caption("No combat stats found in screenshots.")
@@ -467,18 +494,11 @@ with tab2:
         ):
             st.divider()
             df_check = st.session_state.df
-            mask = df_check["Player Name"].astype(str).str.strip().str.lower() == player_name.strip().lower()
+            _pn_lower = player_name.strip().lower()
+            mask = df_check["Player Name"].astype(str).str.strip().str.lower() == _pn_lower
             has_real_data = False
             if mask.any():
                 row = df_check[mask].iloc[0]
                 stat_cols = [c for c in ALL_COLUMNS if c != "Player Name"]
                 has_real_data = any(
-                    str(row.get(c, 0)) not in ("0", "0.0", "", "nan", "None")
-                    for c in stat_cols
-                )
-            label = "Update " + player_name if has_real_data else "Save " + player_name
-            if st.button(label, type="primary", use_container_width=True):
-                data_to_save = {k: v for k, v in st.session_state.extracted.items() if k != "_player"}
-                data_to_save = filter_stats(data_to_save, st.session_state.frontline, st.session_state.backline)
-                data_to_save["Frontline"] = st.session_state.frontline
-                data_to_save[
+   
