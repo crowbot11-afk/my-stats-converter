@@ -253,9 +253,16 @@ with tab1:
         else:
             st.warning(txt)
 
-    # on_click callback reads inp_add from session_state BEFORE rerender
-    st.text_input("Player name", placeholder="Type name here", key="inp_add")
-    st.button("➕ Add to Roster", on_click=cb_add)
+    new_name = st.text_input("Player name", placeholder="Type name here")
+    if st.button("➕ Add to Roster"):
+        name = new_name.strip()
+        if not name:
+            st.session_state.add_msg = ('warning', 'Type a name first.')
+        elif any(name.lower() == n.lower() for n in st.session_state.roster):
+            st.session_state.add_msg = ('warning', f"'{name}' is already in the roster.")
+        else:
+            st.session_state.roster = sorted(st.session_state.roster + [name])
+            st.session_state.add_msg = ('success', f"✅ '{name}' added to roster!")
 
     st.divider()
     st.subheader("Remove (Kick) Player")
@@ -269,8 +276,19 @@ with tab1:
             st.warning(txt)
 
     if st.session_state.roster:
-        st.selectbox("Select player to remove", ["-- select --"] + st.session_state.roster, key="sel_kick")
-        st.button("🗑️ Remove & Delete Their Data", on_click=cb_kick)
+        to_kick = st.selectbox("Select player to remove", ["-- select --"] + st.session_state.roster)
+        if st.button("🗑️ Remove & Delete Their Data"):
+            if to_kick == "-- select --":
+                st.session_state.kick_msg = ('warning', 'Select a player first.')
+            else:
+                st.session_state.roster = [n for n in st.session_state.roster if n.lower() != to_kick.lower()]
+                if 'Player Name' in st.session_state.df.columns:
+                    st.session_state.df = st.session_state.df[
+                        st.session_state.df['Player Name'].astype(str).str.strip().str.lower() != to_kick.lower()
+                    ].reset_index(drop=True)
+                if st.session_state.radio_player == to_kick:
+                    st.session_state.radio_player = '-- select player --'
+                st.session_state.kick_msg = ('success', f"✅ '{to_kick}' removed.")
     else:
         st.info("No players in roster yet.")
 
