@@ -201,37 +201,11 @@ def load_excel(file):
         roster = df['Player Name'].dropna().astype(str).str.strip().tolist()
     return df, roster
 
-# ── Callback for adding a player to roster ──
-def cb_add_to_roster():
-    name = st.session_state.get('new_name_input', '').strip()
-    if not name:
-        st.session_state['roster_msg'] = ('warning', 'Type a name first.')
-    elif name in st.session_state.roster:
-        st.session_state['roster_msg'] = ('warning', f"'{name}' is already in the roster.")
-    else:
-        st.session_state.roster.append(name)
-        st.session_state['roster_msg'] = ('success', f"✅ '{name}' added!")
-
-# ── Callback for removing a player ──
-def cb_kick_player():
-    to_kick = st.session_state.get('kick_sel', '-- select --')
-    if to_kick == '-- select --':
-        st.session_state['kick_msg'] = ('warning', 'Select a player.')
-    else:
-        st.session_state.roster.remove(to_kick)
-        if 'Player Name' in st.session_state.df.columns:
-            st.session_state.df = st.session_state.df[
-                st.session_state.df['Player Name'].astype(str).str.strip() != to_kick
-            ].reset_index(drop=True)
-        if st.session_state.selected_player == to_kick:
-            st.session_state.selected_player = "-- select player --"
-        st.session_state['kick_msg'] = ('success', f"✅ '{to_kick}' removed.")
-
-# ── Callback for player selectbox in Tab 2 ──
+# ── Callback for player selectbox ──
 def cb_player_sel():
-    st.session_state.selected_player = st.session_state['_player_sel_widget']
-    # Clear extracted data if player changed
-    if st.session_state.extracted and st.session_state.extracted.get('_player') != st.session_state.selected_player:
+    val = st.session_state.get('_player_sel_widget', '-- select player --')
+    st.session_state.selected_player = val
+    if st.session_state.extracted and st.session_state.extracted.get('_player') != val:
         st.session_state.extracted = None
 
 # ══════════════════════════════════════════
@@ -258,33 +232,38 @@ with tab1:
 
     st.divider()
     st.subheader("Add New Player to Roster")
-    st.text_input("Player name", key="new_name_input", placeholder="Type name here")
-    st.button("➕ Add to Roster", key="btn_add", on_click=cb_add_to_roster)
+    new_name = st.text_input("Player name", key="new_name_input", placeholder="Type name here")
 
-    # Show feedback messages
-    if 'roster_msg' in st.session_state:
-        level, msg = st.session_state.pop('roster_msg')
-        if level == 'warning':
-            st.warning(msg)
+    if st.button("➕ Add to Roster", key="btn_add"):
+        name = new_name.strip()
+        if not name:
+            st.warning("Type a name first.")
+        elif name in st.session_state.roster:
+            st.warning(f"'{name}' is already in the roster.")
         else:
-            st.success(msg)
+            st.session_state.roster.append(name)
+            st.rerun()  # ← force immediate full rerun so roster list updates NOW
 
     st.divider()
     st.subheader("Remove (Kick) Player")
     if st.session_state.roster:
-        st.selectbox(
+        to_kick = st.selectbox(
             "Select player to remove",
             ["-- select --"] + sorted(st.session_state.roster),
             key="kick_sel"
         )
-        st.button("🗑️ Remove & Delete Their Data", key="btn_kick", on_click=cb_kick_player)
-
-        if 'kick_msg' in st.session_state:
-            level, msg = st.session_state.pop('kick_msg')
-            if level == 'warning':
-                st.warning(msg)
+        if st.button("🗑️ Remove & Delete Their Data", key="btn_kick"):
+            if to_kick == "-- select --":
+                st.warning("Select a player.")
             else:
-                st.success(msg)
+                st.session_state.roster.remove(to_kick)
+                if 'Player Name' in st.session_state.df.columns:
+                    st.session_state.df = st.session_state.df[
+                        st.session_state.df['Player Name'].astype(str).str.strip() != to_kick
+                    ].reset_index(drop=True)
+                if st.session_state.selected_player == to_kick:
+                    st.session_state.selected_player = "-- select player --"
+                st.rerun()  # ← same fix for kick
     else:
         st.info("No players in roster yet.")
 
@@ -307,7 +286,7 @@ with tab2:
         st.subheader("Select Player")
         player_options = ["-- select player --"] + current_roster
 
-        # Validate stored selection is still in roster
+        # Make sure stored selection is still valid
         if st.session_state.selected_player not in player_options:
             st.session_state.selected_player = "-- select player --"
 
@@ -349,12 +328,12 @@ with tab2:
         if do_extract and screenshots and player_name:
             all_text = ""
             bar = st.progress(0)
-            msg = st.empty()
+            msg_slot = st.empty()
             for i, f in enumerate(screenshots):
-                msg.write(f"Reading {i+1}/{len(screenshots)}...")
+                msg_slot.write(f"Reading {i+1}/{len(screenshots)}...")
                 all_text += "\n" + ocr_image(Image.open(f))
                 bar.progress((i+1)/len(screenshots))
-            msg.empty()
+            msg_slot.empty()
             bar.empty()
             st.session_state.extracted = extract_all(all_text)
             st.session_state.extracted['_player'] = player_name
@@ -399,7 +378,7 @@ with tab2:
                 st.session_state.upload_key += 1
                 st.session_state.selected_player = "-- select player --"
                 verb = "Updated" if action == "updated" else "Saved"
-                st.success(f"✅ {verb} **{player_name}**! Tracker has **{len(st.session_state.df)}** players. Go to next player ⬆️")
+                st.success(f"✅ {verb} **{player_name}**! Tracker has **{len(st.session_state.df)}** players.")
                 st.rerun()
 
 # ────────────────────────────────────────
