@@ -45,16 +45,16 @@ ALL_COLUMNS = ['Player Name', 'March Size'] + KNOWN_STATS + [
 TOTAL_ROWS = 100
 
 # ── Init session state ──
-for key, default in {
-    'df': pd.DataFrame(columns=ALL_COLUMNS),
-    'roster': [],
-    'extracted': None,
-    'upload_key': 0,
-    'selected_player': "-- select player --",
-    'flash': None,          # ('success'|'warning', message)
-}.items():
+def ss(key, default):
     if key not in st.session_state:
         st.session_state[key] = default
+
+ss('df', pd.DataFrame(columns=ALL_COLUMNS))
+ss('roster', [])
+ss('extracted', None)
+ss('upload_key', 0)
+ss('player_index', 0)
+ss('flash', None)   # ('success'|'warning', message)
 
 # ── Helpers ──
 def ocr_image(img):
@@ -189,77 +189,70 @@ def load_excel(file):
         roster = df['Player Name'].dropna().astype(str).str.strip().tolist()
     return df, roster
 
-# ── Callbacks — state mutations happen BEFORE re-render ──
-def cb_add():
-    name = st.session_state.get('inp_new_name', '').strip()
-    if not name:
-        st.session_state.flash = ('warning', 'Type a name first.')
-    elif name in st.session_state.roster:
-        st.session_state.flash = ('warning', f"'{name}' is already in the roster.")
-    else:
-        st.session_state.roster = st.session_state.roster + [name]   # new list object triggers update
-        st.session_state.flash = ('success', f"✅ '{name}' added to roster!")
-
-def cb_kick():
-    to_kick = st.session_state.get('sel_kick', '-- select --')
-    if to_kick == '-- select --':
-        st.session_state.flash = ('warning', 'Select a player first.')
-    else:
-        st.session_state.roster = [p for p in st.session_state.roster if p != to_kick]
-        if 'Player Name' in st.session_state.df.columns:
-            st.session_state.df = st.session_state.df[
-                st.session_state.df['Player Name'].astype(str).str.strip() != to_kick
-            ].reset_index(drop=True)
-        if st.session_state.selected_player == to_kick:
-            st.session_state.selected_player = '-- select player --'
-        st.session_state.flash = ('success', f"✅ '{to_kick}' removed.")
-
-def cb_player_sel():
-    val = st.session_state.get('sel_player', '-- select player --')
-    st.session_state.selected_player = val
-    if st.session_state.extracted and st.session_state.extracted.get('_player') != val:
-        st.session_state.extracted = None
-
-# ══════════════════════════════════════════════════════
-# TABS
-# ══════════════════════════════════════════════════════
-tab1, tab2, tab3 = st.tabs(["📁 Load & Roster", "📸 Add / Update Player", "⬇️ Download"])
-
-# ── TAB 1 ──────────────────────────────────────────────
-with tab1:
-
-    # Show flash message at top of tab (persists one render)
+# ── Show and clear flash message ──
+def show_flash():
     if st.session_state.flash:
         level, msg = st.session_state.flash
-        st.session_state.flash = None          # clear after showing
+        st.session_state.flash = None
         if level == 'success':
             st.success(msg)
         else:
             st.warning(msg)
 
+# ══════════════════════════════════════════
+# TABS
+# ══════════════════════════════════════════
+tab1, tab2, tab3 = st.tabs(["📁 Load & Roster", "📸 Add / Update Player", "⬇️ Download"])
+
+# ─────────────────────────────────────────
+# TAB 1
+# ─────────────────────────────────────────
+with tab1:
+    show_flash()
+
     st.subheader("Load Existing Tracker")
-    uploaded = st.file_uploader("Upload alliance_tracker.xlsx", type=["xlsx"], key="fu_load")
+    uploaded = st.file_uploader("Upload alliance_tracker.xlsx", type=["xlsx"], key="load")
     if uploaded:
         df, roster = load_excel(uploaded)
         st.session_state.df = df
         st.session_state.roster = roster
-        st.session_state.selected_player = '-- select player --'
+        st.session_state.player_index = 0
         st.success(f"✅ Loaded {len(df)} players, {len(roster)} in roster.")
 
     st.info(f"**{len(st.session_state.df)}** players with data · **{len(st.session_state.roster)}** in roster")
 
     st.divider()
     st.subheader("Add New Player to Roster")
-    st.text_input("Player name", key="inp_new_name", placeholder="Type name here")
-    st.button("➕ Add to Roster", on_click=cb_add)
+
+    new_name = st.text_input("Player name", placeholder="Type name here")
+    if st.button("➕ Add to Roster"):
+        name = new_name.strip()
+        if not name:
+            st.warning("Type a name first.")
+        elif name in st.session_state.roster:
+            st.warning(f"'{name}' is already in the roster.")
+        else:
+            st.session_state.roster.append(name)
+            st.success(f"✅ '{name}' added to roster!")
+            st.rerun()
 
     st.divider()
     st.subheader("Remove (Kick) Player")
     if st.session_state.roster:
-        st.selectbox("Select player to remove",
-                     ["-- select --"] + sorted(st.session_state.roster),
-                     key="sel_kick")
-        st.button("🗑️ Remove & Delete Their Data", on_click=cb_kick)
+        kick_options = ["-- select --"] + sorted(st.session_state.roster)
+        to_kick = st.selectbox("Select player to remove", kick_options)
+        if st.button("🗑️ Remove & Delete Their Data"):
+            if to_kick == "-- select --":
+                st.warning("Select a player first.")
+            else:
+                st.session_state.roster.remove(to_kick)
+                if 'Player Name' in st.session_state.df.columns:
+                    st.session_state.df = st.session_state.df[
+                        st.session_state.df['Player Name'].astype(str).str.strip() != to_kick
+                    ].reset_index(drop=True)
+                st.session_state.player_index = 0
+                st.session_state.flash = ('success', f"✅ '{to_kick}' removed.")
+                st.rerun()
     else:
         st.info("No players in roster yet.")
 
@@ -270,7 +263,9 @@ with tab1:
         for i, name in enumerate(sorted(st.session_state.roster)):
             cols[i % 2].write(f"• {name}")
 
-# ── TAB 2 ──────────────────────────────────────────────
+# ─────────────────────────────────────────
+# TAB 2
+# ─────────────────────────────────────────
 with tab2:
     current_roster = sorted(st.session_state.roster)
 
@@ -280,22 +275,21 @@ with tab2:
         st.subheader("Select Player")
         player_options = ["-- select player --"] + current_roster
 
-        if st.session_state.selected_player not in player_options:
-            st.session_state.selected_player = "-- select player --"
+        # Clamp index to valid range
+        idx = st.session_state.player_index
+        if idx >= len(player_options):
+            idx = 0
+            st.session_state.player_index = 0
 
-        st.selectbox(
-            "Player",
-            options=player_options,
-            index=player_options.index(st.session_state.selected_player),
-            key="sel_player",
-            on_change=cb_player_sel,
-        )
+        chosen = st.selectbox("Player", options=player_options, index=idx)
 
-        player_name = st.session_state.selected_player if st.session_state.selected_player != "-- select player --" else ""
+        # Save chosen index back to session state so it survives reruns
+        st.session_state.player_index = player_options.index(chosen)
+        player_name = chosen if chosen != "-- select player --" else ""
 
         if player_name:
-            existing = st.session_state.df['Player Name'].astype(str).tolist() if not st.session_state.df.empty else []
-            if player_name in existing:
+            existing_names = st.session_state.df['Player Name'].astype(str).tolist() if not st.session_state.df.empty else []
+            if player_name in existing_names:
                 st.warning(f"⚠️ {player_name} already has data — saving will **replace** it.")
 
         st.divider()
@@ -304,7 +298,7 @@ with tab2:
             "Select all screenshots at once",
             type=["png","jpg","jpeg","webp"],
             accept_multiple_files=True,
-            key=f"fu_shots_{st.session_state.upload_key}"
+            key=f"shots_{st.session_state.upload_key}"
         )
 
         col_a, col_b = st.columns([2,1])
@@ -319,15 +313,17 @@ with tab2:
         if do_extract and screenshots and player_name:
             all_text = ""
             bar = st.progress(0)
-            slot = st.empty()
+            msg_slot = st.empty()
             for i, f in enumerate(screenshots):
-                slot.write(f"Reading {i+1}/{len(screenshots)}...")
+                msg_slot.write(f"Reading {i+1}/{len(screenshots)}...")
                 all_text += "\n" + ocr_image(Image.open(f))
                 bar.progress((i+1)/len(screenshots))
-            slot.empty(); bar.empty()
+            msg_slot.empty()
+            bar.empty()
             st.session_state.extracted = extract_all(all_text)
             st.session_state.extracted['_player'] = player_name
-            st.success(f"✅ {len(st.session_state.extracted)-1} fields extracted for **{player_name}**")
+            n = len(st.session_state.extracted) - 1
+            st.success(f"✅ {n} fields extracted for **{player_name}**")
 
             stats_found = {k: st.session_state.extracted[k] for k in KNOWN_STATS if k in st.session_state.extracted}
             build_keys = ['March Size','Elder Titan Tier','Titan Talent Level','Beast Tier',
@@ -348,32 +344,36 @@ with tab2:
                     st.dataframe(pd.DataFrame(items[:half], columns=['Stat','Value']), use_container_width=True)
                 with cb:
                     st.dataframe(pd.DataFrame(items[half:], columns=['Stat','Value']), use_container_width=True)
-                st.info(f"📊 {len(stats_found)}/47 stats found")
+                st.info(f"📊 {len(stats_found)}/47 stats")
 
             with st.expander("Raw OCR"):
                 st.text_area("", all_text, height=150)
 
         if st.session_state.extracted and st.session_state.extracted.get('_player') == player_name and player_name:
             st.divider()
-            existing = st.session_state.df['Player Name'].astype(str).tolist() if not st.session_state.df.empty else []
-            is_update = player_name in existing
+            existing_names = st.session_state.df['Player Name'].astype(str).tolist() if not st.session_state.df.empty else []
+            is_update = player_name in existing_names
             label = f"🔄 Update {player_name}" if is_update else f"➕ Save {player_name}"
+
             if st.button(label, type="primary"):
                 data_to_save = {k: v for k, v in st.session_state.extracted.items() if k != '_player'}
                 action = save_player(player_name, data_to_save)
                 st.session_state.extracted = None
                 st.session_state.upload_key += 1
-                st.session_state.selected_player = '-- select player --'
-                verb = "Updated" if action == 'updated' else "Saved"
+                verb = "Updated" if action == "updated" else "Saved"
                 st.session_state.flash = ('success', f"✅ {verb} **{player_name}**! {len(st.session_state.df)} players total.")
                 st.rerun()
 
-# ── TAB 3 ──────────────────────────────────────────────
+# ─────────────────────────────────────────
+# TAB 3
+# ─────────────────────────────────────────
 with tab3:
+    n_data = len(st.session_state.df)
+    n_roster = len(st.session_state.roster)
     st.subheader("Download Alliance Tracker")
-    st.write(f"**{len(st.session_state.df)}** players · **{len(st.session_state.roster)}** in roster · **{TOTAL_ROWS}** rows in Excel")
+    st.write(f"**{n_data}** players with data · **{n_roster}** in roster · **{TOTAL_ROWS}** rows in Excel")
 
-    if len(st.session_state.df) > 0:
+    if n_data > 0:
         with st.expander("👁️ Preview data"):
             st.dataframe(st.session_state.df, use_container_width=True)
 
