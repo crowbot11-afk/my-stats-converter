@@ -138,18 +138,23 @@ def extract_all(all_text):
 
 def save_player(name, data):
     data['Player Name'] = name
-    df = st.session_state.df
+    # Always work on an explicit copy to avoid pandas reference issues
+    df = st.session_state.df.copy()
     mask = df['Player Name'].astype(str).str.strip().str.lower() == name.strip().lower()
     if mask.any():
         idx = df.index[mask][0]
-        for k, v in data.items():
-            df.at[idx, k] = v
+        # Build a complete new row: start from existing values, overlay with new data
+        existing_row = df.loc[idx].to_dict()
+        existing_row.update(data)
+        # Assign the whole row at once — avoids silent failures with at[] on mixed dtypes
+        for col in ALL_COLUMNS:
+            df.at[idx, col] = existing_row.get(col, 0)
         st.session_state.df = df
         return 'updated'
     else:
         new_row = {col: data.get(col, 0) for col in ALL_COLUMNS}
         st.session_state.df = pd.concat(
-            [st.session_state.df, pd.DataFrame([new_row])], ignore_index=True
+            [df, pd.DataFrame([new_row])], ignore_index=True
         )
         return 'added'
 
@@ -441,31 +446,26 @@ with tab2:
             st.divider()
             df_check = st.session_state.df
             mask = df_check['Player Name'].astype(str).str.strip().str.lower() == player_name.strip().lower()
-            label = f"🔄 Update {player_name}" if mask.any() else f"➕ Save {player_name}"
+            has_real_data = False
+            if mask.any():
+                row = df_check[mask].iloc[0]
+                stat_cols = [c for c in ALL_COLUMNS if c != 'Player Name']
+                has_real_data = any(
+                    str(row.get(c, 0)) not in ('0', '0.0', '', 'nan', 'None')
+                    for c in stat_cols
+                )
+            label = f"🔄 Update {player_name}" if has_real_data else f"➕ Save {player_name}"
             if st.button(label, type="primary"):
                 data_to_save = {k: v for k, v in st.session_state.extracted.items() if k != '_player'}
                 action = save_player(player_name, data_to_save)
                 persist()
-                st.session_state.extracted = None
-                st.session_state.upload_key += 1
-                verb = "Updated" if action == "updated" else "Saved"
-                st.session_state.save_msg = ('success', f"✅ {verb} **{player_name}**!")
-                st.rerun()
-
-# ─────────────────────────────────────────
-# TAB 3
-# ─────────────────────────────────────────
-with tab3:
-    st.subheader("Download Alliance Tracker")
-    st.write(f"**{len(st.session_state.df)}** players with data · **{len(st.session_state.roster)}** in roster · **{TOTAL_ROWS}** rows in Excel")
-    if len(st.session_state.df) > 0:
-        with st.expander("👁️ Preview data"):
-            st.dataframe(st.session_state.df, use_container_width=True)
-    excel_buf = build_excel()
-    st.download_button(
-        label="⬇️ Download alliance_tracker.xlsx",
-        data=excel_buf,
-        file_name="alliance_tracker.xlsx",
-        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-    )
-    st.caption("Save to Google Drive. Next session upload it here to continue.")
+                # Verify the save actually worked
+                df_verify = st.session_state.df
+                v_mask = df_verify['Player Name'].astype(str).str.strip().str.lower() == player_name.strip().lower()
+                if v_mask.any():
+                    saved_fields = sum(
+                        1 for c in ALL_COLUMNS if c != 'Player Name'
+                        and str(df_verify[v_mask].iloc[0].get(c, 0)) not in ('0', '0.0', '', 'nan', 'None')
+                    )
+                    verb = "Updated" if action == "updated" else "Saved"
+                    st.session_state.save_msg = ('success', f"✅ {verb} **{player_nam
