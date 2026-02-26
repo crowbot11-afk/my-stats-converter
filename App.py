@@ -2,7 +2,7 @@ import streamlit as st
 import pandas as pd
 import pytesseract
 from PIL import Image
-import io
+import io, os, json
 import re
 from openpyxl import Workbook
 from openpyxl.styles import Font, PatternFill, Alignment
@@ -43,25 +43,46 @@ ALL_COLUMNS = ['Player Name', 'March Size'] + KNOWN_STATS + [
 ]
 
 TOTAL_ROWS = 100
+DATA_FILE = '/tmp/alliance_data.json'
 
-# ── Init session state ONCE ──
-if 'df' not in st.session_state:
-    st.session_state.df = pd.DataFrame(columns=ALL_COLUMNS)
-if 'roster' not in st.session_state:
-    st.session_state.roster = []
-if 'extracted' not in st.session_state:
+# ── Persist to disk ──
+def persist():
+    payload = {
+        'roster': st.session_state.roster,
+        'df': st.session_state.df.to_dict('records'),
+    }
+    with open(DATA_FILE, 'w') as f:
+        json.dump(payload, f)
+
+def load_persisted():
+    if os.path.exists(DATA_FILE):
+        try:
+            with open(DATA_FILE, 'r') as f:
+                payload = json.load(f)
+            roster = payload.get('roster', [])
+            records = payload.get('df', [])
+            df = pd.DataFrame(records, columns=ALL_COLUMNS) if records else pd.DataFrame(columns=ALL_COLUMNS)
+            # ensure all columns exist
+            for col in ALL_COLUMNS:
+                if col not in df.columns:
+                    df[col] = 0
+            return roster, df
+        except Exception:
+            pass
+    return [], pd.DataFrame(columns=ALL_COLUMNS)
+
+# ── Init session state — load from disk on first run ──
+if 'loaded' not in st.session_state:
+    roster, df = load_persisted()
+    st.session_state.roster = roster
+    st.session_state.df = df
     st.session_state.extracted = None
-if 'upload_key' not in st.session_state:
     st.session_state.upload_key = 0
-if 'add_msg' not in st.session_state:
     st.session_state.add_msg = None
-if 'kick_msg' not in st.session_state:
     st.session_state.kick_msg = None
-if 'save_msg' not in st.session_state:
     st.session_state.save_msg = None
-if 'chosen_player' not in st.session_state:
     st.session_state.chosen_player = ''
-
+    st.session_state.loaded = True
 
 # ── Helpers ──
 def ocr_image(img):
@@ -127,7 +148,7 @@ def save_player(name, data):
         st.session_state.df = df
         return 'updated'
     else:
-        new_row = {col: data.get(col, None) for col in ALL_COLUMNS}
+        new_row = {col: data.get(col, 0) for col in ALL_COLUMNS}
         st.session_state.df = pd.concat(
             [st.session_state.df, pd.DataFrame([new_row])], ignore_index=True
         )
@@ -138,7 +159,7 @@ def build_excel():
     roster = sorted(st.session_state.roster)
     for col in ALL_COLUMNS:
         if col not in df.columns:
-            df[col] = None
+            df[col] = 0
     df = df.reindex(columns=ALL_COLUMNS)
     wb = Workbook()
     ws_r = wb.active
@@ -197,31 +218,6 @@ def load_excel(file):
         roster = df['Player Name'].dropna().astype(str).str.strip().tolist()
     return df, roster
 
-# ── Tab 1 callbacks — run BEFORE render, session state already committed ──
-def cb_add():
-    name = st.session_state.get('inp_add', '').strip()
-    if not name:
-        st.session_state.add_msg = ('warning', 'Type a name first.')
-    elif any(name.lower() == n.lower() for n in st.session_state.roster):
-        st.session_state.add_msg = ('warning', f"'{name}' is already in the roster.")
-    else:
-        st.session_state.roster = sorted(st.session_state.roster + [name])
-        st.session_state.add_msg = ('success', f"✅ '{name}' added to roster!")
-
-def cb_kick():
-    to_kick = st.session_state.get('sel_kick', '-- select --')
-    if to_kick == '-- select --':
-        st.session_state.kick_msg = ('warning', 'Select a player first.')
-    else:
-        st.session_state.roster = [n for n in st.session_state.roster if n.lower() != to_kick.lower()]
-        if 'Player Name' in st.session_state.df.columns:
-            st.session_state.df = st.session_state.df[
-                st.session_state.df['Player Name'].astype(str).str.strip().str.lower() != to_kick.lower()
-            ].reset_index(drop=True)
-        if st.session_state.get('chosen_player','') == to_kick:
-            st.session_state.chosen_player = ''
-        st.session_state.kick_msg = ('success', f"✅ '{to_kick}' removed.")
-
 # ══════════════════════════════════════════
 # TABS
 # ══════════════════════════════════════════
@@ -238,6 +234,7 @@ with tab1:
         st.session_state.df = df
         st.session_state.roster = roster
         st.session_state.chosen_player = ''
+        persist()
         st.success(f"✅ Loaded {len(df)} players, {len(roster)} in roster.")
 
     st.info(f"**{len(st.session_state.df)}** players with data · **{len(st.session_state.roster)}** in roster")
@@ -261,15 +258,16 @@ with tab1:
         elif any(name.lower() == n.lower() for n in st.session_state.roster):
             st.session_state.add_msg = ('warning', f"'{name}' is already in the roster.")
         else:
+            # Add to roster
             st.session_state.roster = sorted(st.session_state.roster + [name])
-            # Auto-create a row with 0 for all stats
+            # Create row with all zeros
             new_row = {col: 0 for col in ALL_COLUMNS}
             new_row['Player Name'] = name
-            new_row['March Size'] = 0
             st.session_state.df = pd.concat(
                 [st.session_state.df, pd.DataFrame([new_row])], ignore_index=True
             )
-            st.session_state.add_msg = ('success', f"✅ '{name}' added to roster with default stats!")
+            persist()   # ← save to disk immediately
+            st.session_state.add_msg = ('success', f"✅ '{name}' added!")
 
     st.divider()
     st.subheader("Remove (Kick) Player")
@@ -289,12 +287,12 @@ with tab1:
                 st.session_state.kick_msg = ('warning', 'Select a player first.')
             else:
                 st.session_state.roster = [n for n in st.session_state.roster if n.lower() != to_kick.lower()]
-                if 'Player Name' in st.session_state.df.columns:
-                    st.session_state.df = st.session_state.df[
-                        st.session_state.df['Player Name'].astype(str).str.strip().str.lower() != to_kick.lower()
-                    ].reset_index(drop=True)
-                if st.session_state.get('chosen_player','') == to_kick:
+                st.session_state.df = st.session_state.df[
+                    st.session_state.df['Player Name'].astype(str).str.strip().str.lower() != to_kick.lower()
+                ].reset_index(drop=True)
+                if st.session_state.chosen_player.lower() == to_kick.lower():
                     st.session_state.chosen_player = ''
+                persist()   # ← save to disk immediately
                 st.session_state.kick_msg = ('success', f"✅ '{to_kick}' removed.")
     else:
         st.info("No players in roster yet.")
@@ -310,7 +308,11 @@ with tab1:
 # TAB 2
 # ─────────────────────────────────────────
 with tab2:
-    roster = st.session_state.roster
+    # Always read fresh from disk so Tab 2 always sees latest roster
+    roster, df_disk = load_persisted()
+    # Sync session state with disk
+    st.session_state.roster = roster
+    st.session_state.df = df_disk
 
     if not roster:
         st.info("Go to **Load & Roster** tab and add players first.")
@@ -325,21 +327,25 @@ with tab2:
 
         st.subheader("Select Player")
 
-        # Fix: if stored player no longer in roster (was kicked), reset
         if st.session_state.chosen_player not in roster:
             st.session_state.chosen_player = ''
 
-        # Use index-based keys so new players don't cause key-not-found resets
-        for i, p in enumerate(roster):
-            is_selected = (p == st.session_state.chosen_player)
-            if st.button(p, key=f"btn_p_{i}", type="primary" if is_selected else "secondary"):
-                st.session_state.chosen_player = p
+        # Selectbox — now safe because roster comes from disk not session state
+        chosen = st.selectbox(
+            "Select player",
+            options=["-- select player --"] + roster,
+            index=(roster.index(st.session_state.chosen_player) + 1) if st.session_state.chosen_player in roster else 0,
+            key="sel_player_tab2"
+        )
+        if chosen != "-- select player --":
+            st.session_state.chosen_player = chosen
+        else:
+            st.session_state.chosen_player = ''
 
-        # Read AFTER buttons so we get the value set by the click above
         player_name = st.session_state.chosen_player
 
         if player_name:
-            existing = st.session_state.df['Player Name'].astype(str).str.strip().tolist() if not st.session_state.df.empty else []
+            existing = st.session_state.df['Player Name'].astype(str).str.strip().tolist()
             if player_name in existing:
                 st.warning(f"⚠️ {player_name} already has data — saving will **replace** it.")
             else:
@@ -401,15 +407,16 @@ with tab2:
 
         if st.session_state.extracted and st.session_state.extracted.get('_player') == player_name and player_name:
             st.divider()
-            existing = st.session_state.df['Player Name'].astype(str).str.strip().tolist() if not st.session_state.df.empty else []
+            existing = st.session_state.df['Player Name'].astype(str).str.strip().tolist()
             label = f"🔄 Update {player_name}" if player_name in existing else f"➕ Save {player_name}"
             if st.button(label, type="primary"):
                 data_to_save = {k: v for k, v in st.session_state.extracted.items() if k != '_player'}
                 action = save_player(player_name, data_to_save)
+                persist()   # ← save to disk after updating stats
                 st.session_state.extracted = None
                 st.session_state.upload_key += 1
                 verb = "Updated" if action == "updated" else "Saved"
-                st.session_state.save_msg = ('success', f"✅ {verb} **{player_name}**! {len(st.session_state.df)} players total.")
+                st.session_state.save_msg = ('success', f"✅ {verb} **{player_name}**!")
                 st.rerun()
 
 # ─────────────────────────────────────────
