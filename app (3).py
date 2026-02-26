@@ -13,28 +13,17 @@ st.set_page_config(page_title="Alliance Tracker", page_icon="sword", layout="cen
 st.title("Alliance Tracker")
 
 KNOWN_STATS = [
-    "Infantry Attack",
-    "Infantry Defense",
     "Infantry HP",
-    "Cavalry Attack",
-    "Cavalry Defense",
     "Cavalry HP",
     "Archer Attack",
-    "Archer Defense",
-    "Archer HP",
     "Mage Attack",
-    "Mage Defense",
-    "Mage HP",
     "Angel Attack",
-    "Angel Defense",
     "Angel HP",
-    "Golem Attack",
-    "Golem Defense",
-    "Golem HP",
     "Enemy Troops Attack Reduction",
     "Enemy Troops HP Reduction",
     "Archer Damage",
     "Mage Damage",
+    "Troops Damage",
     "Troops Damage Taken Reduction",
     "Damage Boost when attacking",
     "Damage taken reduced when attacking",
@@ -51,8 +40,6 @@ KNOWN_STATS = [
     "Damage Against Angels Boost",
     "Infantry Damage Taken Reduction",
     "Cavalry Damage Taken Reduction",
-    "Reduces Damage taken from Infantry",
-    "Reduces Damage taken from Cavalry",
     "Reduces Damage taken from Archers",
     "Reduces Damage taken from Mages",
     "Mage damage increased on Infantry",
@@ -83,7 +70,7 @@ def filter_stats(data, frontline, backline):
 
 
 ALL_COLUMNS = ["Player Name", "Frontline", "Backline", "March Size"] + KNOWN_STATS + [
-    "Elder Titan Tier", "Titan Talent Level", "Beast Tier", "Beast Talent Level",
+    "Elder Titan Tier", "Titan Talent Level", "Beast Talent Level",
     "Beast Skill Level", "Totem Level", "Special Stats Level", "Jewels Level",
     "Zodiac Green", "Zodiac White", "Northern Green", "Colossus Level", "Emblem Level"
 ]
@@ -153,9 +140,6 @@ def extract_all(all_text):
     talent_levels = re.findall(r"Total Talent Level:\s*(\d+)", all_text)
     if talent_levels:
         data["Titan Talent Level"] = talent_levels[0]
-    m = re.search(r"[Ee]volution:\s*Tier\s*(\d+)", all_text)
-    if m:
-        data["Beast Tier"] = m.group(1)
     if len(talent_levels) >= 2:
         data["Beast Talent Level"] = talent_levels[1]
     m = re.search(r"Total [Ss]kill Level:\s*(\d+)", all_text)
@@ -456,7 +440,7 @@ with tab2:
                 if k in st.session_state.extracted
             }
             build_keys = [
-                "March Size", "Elder Titan Tier", "Titan Talent Level", "Beast Tier",
+                "March Size", "Elder Titan Tier", "Titan Talent Level",
                 "Beast Talent Level", "Beast Skill Level", "Totem Level",
                 "Special Stats Level", "Jewels Level", "Zodiac Green", "Zodiac White",
                 "Northern Green", "Colossus Level", "Emblem Level"
@@ -508,57 +492,4 @@ with tab2:
                         break
             label = "Update " + player_name if has_real_data else "Save " + player_name
             if st.button(label, type="primary", use_container_width=True):
-                data_to_save = {
-                    k: v for k, v in st.session_state.extracted.items()
-                    if k != "_player"
-                }
-                data_to_save = filter_stats(
-                    data_to_save,
-                    st.session_state.frontline,
-                    st.session_state.backline
-                )
-                data_to_save["Frontline"] = st.session_state.frontline
-                data_to_save["Backline"] = st.session_state.backline
-                action = save_player(player_name, data_to_save)
-                persist()
-                df_verify = st.session_state.df
-                _pn3 = player_name.strip().lower()
-                v_mask = df_verify["Player Name"].astype(str).str.strip().str.lower() == _pn3
-                if v_mask.any():
-                    saved_fields = 0
-                    _vrow = df_verify[v_mask].iloc[0]
-                    for _c in ALL_COLUMNS:
-                        if _c == "Player Name":
-                            continue
-                        if str(_vrow.get(_c, 0)) not in ("0", "0.0", "", "nan", "None"):
-                            saved_fields += 1
-                    verb = "Updated" if action == "updated" else "Saved"
-                    _msg = verb + " " + player_name + " - " + str(saved_fields) + " fields stored."
-                    st.session_state.save_msg = ("success", _msg)
-                else:
-                    _wmsg = "Save failed for " + player_name + ". Please try again."
-                    st.session_state.save_msg = ("warning", _wmsg)
-                st.session_state.extracted = None
-                st.session_state.upload_key += 1
-                st.rerun()
-
-# TAB 3
-with tab3:
-    st.subheader("Download Alliance Tracker")
-    st.write(
-        str(len(st.session_state.df)) + " players with data / "
-        + str(len(st.session_state.roster)) + " in roster / "
-        + str(TOTAL_ROWS) + " rows in Excel"
-    )
-    if len(st.session_state.df) > 0:
-        with st.expander("Preview data"):
-            st.dataframe(st.session_state.df, use_container_width=True)
-    excel_buf = build_excel()
-    st.download_button(
-        label="Download alliance_tracker.xlsx",
-        data=excel_buf,
-        file_name="alliance_tracker.xlsx",
-        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        use_container_width=True
-    )
-    st.caption("Save to Google Drive. Next session upload it here to continue.")
+                data_to_save
