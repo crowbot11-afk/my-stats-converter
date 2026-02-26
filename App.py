@@ -253,9 +253,9 @@ with tab1:
         else:
             st.warning(txt)
 
-    new_name = st.text_input("Player name", placeholder="Type name here")
+    new_name = st.text_input("Player name", placeholder="Type name here", key="inp_new_name")
     if st.button("➕ Add to Roster"):
-        name = new_name.strip()
+        name = st.session_state.inp_new_name.strip()
         if not name:
             st.session_state.add_msg = ('warning', 'Type a name first.')
         elif any(name.lower() == n.lower() for n in st.session_state.roster):
