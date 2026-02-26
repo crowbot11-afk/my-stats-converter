@@ -4,239 +4,248 @@ import pytesseract
 from PIL import Image
 import io
 import re
-from openpyxl import Workbook
+from openpyxl import Workbook, load_workbook
 from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
 from openpyxl.utils import get_column_letter
 
-st.set_page_config(page_title="Battle Report", page_icon="⚔️", layout="centered")
+st.set_page_config(page_title="Alliance Battle Tracker", page_icon="⚔️", layout="centered")
 
-st.title("⚔️ Battle Report Extractor")
-st.write("Upload your Battle Report screenshot to extract stats into Excel.")
+st.title("⚔️ Alliance Battle Report Tracker")
+st.write("Upload all screenshots for one player, extract their stats, and add them to your Alliance Excel tracker.")
 
-uploaded_file = st.file_uploader("Upload screenshot", type=["png", "jpg", "jpeg", "webp"])
+# ── Known stat names from the game (used to validate OCR lines) ──
+STATS_BONUS_KEYS = [
+    "Infantry Attack", "Infantry Defense", "Infantry HP",
+    "Cavalry Attack", "Cavalry Defense", "Cavalry HP",
+    "Archer Attack", "Archer Defense", "Archer HP",
+    "Mage Attack", "Mage Defense", "Mage HP",
+    "Angel Attack", "Angel Defense", "Angel HP",
+    "Golem Attack", "Golem Defense", "Golem HP",
+    "Enemy Troops Attack Reduction", "Enemy Troops HP Reduction",
+    "Archer Damage", "Mage Damage", "Troops Damage Taken Reduction",
+    "Damage Boost when attacking", "Damage taken reduced when attacking",
+    "Damage Boost when defending", "Damage taken reduced when defending",
+    "Infantry Resilience", "Cavalry Resilience",
+    "Archer Penetration", "Mage Penetration",
+    "Archer Mastery", "Mage Mastery",
+    "Damage Against Infantry Boost", "Damage Against Cavalry Boost",
+    "Damage Against Angels Boost",
+    "Infantry Damage Taken Reduction", "Cavalry Damage Taken Reduction",
+    "Reduces Damage taken from Infantry", "Reduces Damage taken from Cavalry",
+    "Reduces Damage taken from Archers", "Reduces Damage taken from Mages",
+    "Mage damage increased on Infantry", "Mage damage increased on Cavalry",
+    "Mage damage increased on Archers",
+    "Critical Strike Rate Boost", "Critical Strike Rate Taken Reduction",
+    "Golem Defense", "Golem HP",
+]
 
-def parse_battle_report(text):
-    lines = [l.strip() for l in text.splitlines() if l.strip()]
+def ocr_image(img):
+    return pytesseract.image_to_string(img, config='--psm 6')
 
-    battle_stats = []
-    stats_bonus = []
-    artifacts = []
+def extract_player_info(all_text):
+    info = {}
+    # Player name
+    m = re.search(r'\^\^(.+?)\^\^', all_text)
+    if m:
+        info['Player Name'] = m.group(1).strip()
+    # Result
+    m = re.search(r'\b(Victory|Defeat)\b', all_text, re.I)
+    if m:
+        info['Result'] = m.group(1)
+    # Power Loss
+    m = re.search(r'Power Loss\s+([-\d,]+)', all_text)
+    if m:
+        info['Power Loss'] = m.group(1).replace(',', '')
+    # Battle stats
+    for stat in ['Total Army', 'Kills', 'Losses', 'Wounded', 'Survivors', 'Battlers']:
+        m = re.search(rf'{stat}\s+([\d,]+)', all_text)
+        if m:
+            info[stat] = m.group(1).replace(',', '')
+    return info
 
-    section = None
-    attacker_vals = {}
-    defender_vals = {}
+def extract_stats_bonus(all_text):
+    stats = {}
+    lines = all_text.splitlines()
+    for line in lines:
+        line = line.strip()
+        # Match: "Stat Name   123.4%" or "Stat Name   86"
+        m = re.match(r'^([A-Za-z][A-Za-z\s]+?)\s{2,}([\d,]+\.?\d*%?)$', line)
+        if m:
+            key = m.group(1).strip()
+            val = m.group(2).strip()
+            # Only keep if it looks like a real stat (not section headers)
+            if len(key) > 3 and not re.search(r'battle report|attacker|defender|stats bonus|artifact|overall|troops info|training|totem|beast|equip|palace|garden|colossus|emblem|deployed|skill|evolution|amount|level|star|green|white|northern|zodiac', key, re.I):
+                stats[key] = val
+    return stats
 
-    i = 0
-    while i < len(lines):
-        line = lines[i]
+def extract_other_info(all_text):
+    other = {}
+    # Elder Titan
+    m = re.search(r'Evolution:\s*(.+)', all_text)
+    if m:
+        other['Elder Titan Evolution'] = m.group(1).strip()
+    m = re.search(r'Total Talent Level:\s*(\d+)', all_text)
+    if m:
+        other['Total Talent Level'] = m.group(1)
+    # Beast
+    m = re.search(r'Beast.*?Evolution:\s*Tier\s*(\d+)', all_text, re.S)
+    if m:
+        other['Beast Tier'] = m.group(1)
+    # Totem
+    m = re.search(r'Guard Totem.*?Level:\s*(Lv\.\d+)', all_text, re.S)
+    if m:
+        other['Totem Level'] = m.group(1)
+    # Equip
+    m = re.search(r'Total Special Stats Level:\s*(\d+)', all_text)
+    if m:
+        other['Special Stats Level'] = m.group(1)
+    m = re.search(r'Total Jewels Level:\s*(\d+)', all_text)
+    if m:
+        other['Jewels Level'] = m.group(1)
+    # Colossus
+    m = re.search(r'Colossus.*?Total Level:\s*(\d+)', all_text, re.S)
+    if m:
+        other['Colossus Level'] = m.group(1)
+    # Emblem
+    m = re.search(r'Emblem.*?Total Level:\s*(\d+)', all_text, re.S)
+    if m:
+        other['Emblem Level'] = m.group(1)
+    return other
 
-        # Detect sections
-        if re.search(r'overall info|battle report', line, re.I):
-            i += 1
-            continue
-        if re.search(r'stats bonus', line, re.I):
-            section = 'stats'
-            i += 1
-            continue
-        if re.search(r'artifact', line, re.I):
-            section = 'artifact'
-            i += 1
-            continue
-        if re.search(r'attacker|defender|troops info', line, re.I):
-            section = 'battle'
-            i += 1
-            continue
+def build_player_row(player_info, stats_bonus, other_info):
+    row = {}
+    row.update(player_info)
+    row.update(stats_bonus)
+    row.update(other_info)
+    return row
 
-        # Parse Stats Bonus: "Stat Name   33.6%"
-        if section == 'stats':
-            match = re.match(r'^(.+?)\s+([\d,]+\.?\d*%?)$', line)
-            if match:
-                stats_bonus.append({
-                    "Stat": match.group(1).strip(),
-                    "Value": match.group(2).strip()
-                })
-            i += 1
-            continue
-
-        # Parse Artifact lines
-        if section == 'artifact':
-            artifacts.append({"Info": line})
-            i += 1
-            continue
-
-        # Parse battle lines: numbers with labels
-        if section == 'battle':
-            # Lines like: "51,199 Losses 0" or "Survivors 134 Kills 78"
-            match = re.match(r'^([\w\s]+?)\s+([\d,]+)\s+([\w\s]+?)\s+([\d,]+)$', line)
-            if match:
-                battle_stats.append({
-                    "Stat": match.group(1).strip() + " / " + match.group(3).strip(),
-                    "Attacker": match.group(2).replace(',', ''),
-                    "Defender": match.group(4).replace(',', '')
-                })
-            else:
-                # Try single number line
-                match2 = re.match(r'^([\w\s]+?)\s+([\d,]+)$', line)
-                if match2:
-                    battle_stats.append({
-                        "Stat": match2.group(1).strip(),
-                        "Attacker": match2.group(2).replace(',', ''),
-                        "Defender": ""
-                    })
-            i += 1
-            continue
-
-        # Default: try to detect stat/value pairs anywhere
-        match = re.match(r'^(.+?)\s{2,}([\d,]+\.?\d*%?)$', line)
-        if match:
-            stats_bonus.append({
-                "Stat": match.group(1).strip(),
-                "Value": match.group(2).strip()
-            })
-        i += 1
-
-    return battle_stats, stats_bonus, artifacts
-
-def build_excel(battle_stats, stats_bonus, artifacts, raw_text):
-    wb = Workbook()
-
-    header_font = Font(name='Arial', bold=True, color='FFFFFF', size=11)
-    header_fill = PatternFill('solid', start_color='8B0000')  # Dark red like game UI
-    green_fill = PatternFill('solid', start_color='C6EFCE')
-    blue_fill = PatternFill('solid', start_color='BDD7EE')
-    title_font = Font(name='Arial', bold=True, size=13)
-    center = Alignment(horizontal='center', vertical='center')
-    thin = Border(
-        left=Side(style='thin'), right=Side(style='thin'),
-        top=Side(style='thin'), bottom=Side(style='thin')
-    )
-
-    def style_header(cell, fill=None):
-        cell.font = header_font
-        cell.fill = fill or header_fill
-        cell.alignment = center
-        cell.border = thin
-
-    def style_cell(cell, bold=False):
-        cell.font = Font(name='Arial', bold=bold, size=10)
-        cell.alignment = Alignment(vertical='center')
-        cell.border = thin
-
-    # ── Sheet 1: Battle Stats ──
-    ws1 = wb.active
-    ws1.title = "Battle Stats"
-    ws1['A1'] = "⚔️ Battle Report - Combat Stats"
-    ws1['A1'].font = title_font
-    ws1.merge_cells('A1:C1')
-    ws1['A1'].alignment = center
-
-    ws1.append([])
-    ws1.append(["Stat", "Attacker", "Defender"])
-    for cell in ws1[3]:
-        style_header(cell)
-
-    if battle_stats:
-        for row in battle_stats:
-            ws1.append([row.get("Stat",""), row.get("Attacker",""), row.get("Defender","")])
-            r = ws1.max_row
-            style_cell(ws1.cell(r, 1), bold=True)
-            style_cell(ws1.cell(r, 2))
-            style_cell(ws1.cell(r, 3))
-    else:
-        ws1.append(["No battle stats detected - check Raw Text sheet"])
-
-    ws1.column_dimensions['A'].width = 35
-    ws1.column_dimensions['B'].width = 15
-    ws1.column_dimensions['C'].width = 15
-
-    # ── Sheet 2: Stats Bonus ──
-    ws2 = wb.create_sheet("Stats Bonus")
-    ws2['A1'] = "📊 Stats Bonus"
-    ws2['A1'].font = title_font
-    ws2.merge_cells('A1:B1')
-    ws2['A1'].alignment = center
-
-    ws2.append([])
-    ws2.append(["Stat Name", "Value"])
-    for cell in ws2[3]:
-        style_header(cell)
-
-    if stats_bonus:
-        for idx, row in enumerate(stats_bonus):
-            ws2.append([row.get("Stat",""), row.get("Value","")])
-            r = ws2.max_row
-            fill = green_fill if idx % 2 == 0 else PatternFill('solid', start_color='EBF5EB')
-            ws2.cell(r, 1).fill = fill
-            ws2.cell(r, 2).fill = fill
-            style_cell(ws2.cell(r, 1))
-            style_cell(ws2.cell(r, 2))
-    else:
-        ws2.append(["No stats bonus detected - check Raw Text sheet"])
-
-    ws2.column_dimensions['A'].width = 40
-    ws2.column_dimensions['B'].width = 15
-
-    # ── Sheet 3: Artifacts ──
-    if artifacts:
-        ws3 = wb.create_sheet("Artifacts")
-        ws3['A1'] = "🏺 Artifact Info"
-        ws3['A1'].font = title_font
-        ws3.append([])
-        ws3.append(["Info"])
-        style_header(ws3.cell(3, 1))
-        for row in artifacts:
-            ws3.append([row.get("Info","")])
-            style_cell(ws3.cell(ws3.max_row, 1))
-        ws3.column_dimensions['A'].width = 50
-
-    # ── Sheet 4: Raw Text ──
-    ws4 = wb.create_sheet("Raw OCR Text")
-    ws4['A1'] = "Raw Text (for reference / manual correction)"
-    ws4['A1'].font = Font(bold=True)
-    for i, line in enumerate(raw_text.splitlines(), start=2):
-        ws4.cell(i, 1).value = line
-    ws4.column_dimensions['A'].width = 80
-
+def save_to_excel(existing_df, new_row):
+    updated_df = pd.concat([existing_df, pd.DataFrame([new_row])], ignore_index=True)
     buf = io.BytesIO()
-    wb.save(buf)
+    with pd.ExcelWriter(buf, engine='openpyxl') as writer:
+        updated_df.to_excel(writer, index=False, sheet_name='Alliance Stats')
+        ws = writer.sheets['Alliance Stats']
+
+        # Style header row
+        header_fill = PatternFill('solid', start_color='8B0000')
+        header_font = Font(name='Arial', bold=True, color='FFFFFF', size=10)
+        center = Alignment(horizontal='center', vertical='center')
+        for cell in ws[1]:
+            cell.fill = header_fill
+            cell.font = header_font
+            cell.alignment = center
+
+        # Alternate row colors
+        light = PatternFill('solid', start_color='FFF8F0')
+        lighter = PatternFill('solid', start_color='FFFFFF')
+        for i, row in enumerate(ws.iter_rows(min_row=2, max_row=ws.max_row), start=2):
+            for cell in row:
+                cell.fill = light if i % 2 == 0 else lighter
+                cell.font = Font(name='Arial', size=10)
+                cell.alignment = Alignment(horizontal='center', vertical='center')
+
+        # Auto column widths
+        for col in ws.columns:
+            max_len = max((len(str(cell.value)) if cell.value else 0) for cell in col)
+            ws.column_dimensions[get_column_letter(col[0].column)].width = min(max_len + 4, 30)
+
+        ws.freeze_panes = 'B2'
+
     buf.seek(0)
-    return buf
+    return updated_df, buf
 
-if uploaded_file:
-    image = Image.open(uploaded_file)
-    st.image(image, caption="Uploaded Screenshot", use_column_width=True)
+# ── Session state for accumulating players ──
+if 'alliance_df' not in st.session_state:
+    st.session_state.alliance_df = pd.DataFrame()
+if 'last_player' not in st.session_state:
+    st.session_state.last_player = None
 
-    with st.spinner("Reading text from image..."):
-        raw_text = pytesseract.image_to_string(image)
+# ── Upload existing tracker (optional) ──
+st.subheader("1️⃣ Load Existing Alliance Tracker (optional)")
+existing_file = st.file_uploader("Upload your existing Alliance Excel to add more players", type=["xlsx"], key="existing")
+if existing_file:
+    st.session_state.alliance_df = pd.read_excel(existing_file)
+    st.success(f"Loaded {len(st.session_state.alliance_df)} existing players.")
 
-    with st.expander("📄 Raw OCR Text (tap to expand)"):
-        st.text_area("", raw_text, height=200)
+# ── Upload player screenshots ──
+st.subheader("2️⃣ Upload All Screenshots for One Player")
+uploaded_files = st.file_uploader(
+    "Upload all screenshots for this player (select multiple at once)",
+    type=["png", "jpg", "jpeg", "webp"],
+    accept_multiple_files=True,
+    key="screenshots"
+)
 
-    battle_stats, stats_bonus, artifacts = parse_battle_report(raw_text)
+if uploaded_files:
+    st.write(f"📸 {len(uploaded_files)} screenshots uploaded")
 
-    st.subheader("⚔️ Battle Stats")
-    if battle_stats:
-        st.dataframe(pd.DataFrame(battle_stats), use_container_width=True)
-    else:
-        st.info("No battle stats detected. Check Raw OCR Text above.")
+    if st.button("🔍 Extract Stats from Screenshots"):
+        all_text = ""
+        progress = st.progress(0)
+        for i, f in enumerate(uploaded_files):
+            img = Image.open(f)
+            all_text += "\n" + ocr_image(img)
+            progress.progress((i + 1) / len(uploaded_files))
 
-    st.subheader("📊 Stats Bonus")
-    if stats_bonus:
-        df_bonus = pd.DataFrame(stats_bonus)
-        edited_bonus = st.data_editor(df_bonus, num_rows="dynamic", use_container_width=True)
-        stats_bonus = edited_bonus.to_dict('records')
-    else:
-        st.info("No stats bonus detected. Check Raw OCR Text above.")
+        player_info = extract_player_info(all_text)
+        stats_bonus = extract_stats_bonus(all_text)
+        other_info = extract_other_info(all_text)
+        player_row = build_player_row(player_info, stats_bonus, other_info)
 
-    if artifacts:
-        st.subheader("🏺 Artifacts")
-        st.dataframe(pd.DataFrame(artifacts), use_container_width=True)
+        st.session_state.last_player = player_row
 
-    excel_buf = build_excel(battle_stats, stats_bonus, artifacts, raw_text)
+        st.subheader("✅ Extracted Data")
+
+        col1, col2 = st.columns(2)
+        with col1:
+            st.markdown("**Player Info**")
+            st.dataframe(pd.DataFrame(list(player_info.items()), columns=["Field", "Value"]), use_container_width=True)
+        with col2:
+            st.markdown("**Other Info**")
+            st.dataframe(pd.DataFrame(list(other_info.items()), columns=["Field", "Value"]), use_container_width=True)
+
+        st.markdown("**Stats Bonus**")
+        st.dataframe(pd.DataFrame(list(stats_bonus.items()), columns=["Stat", "Value"]), use_container_width=True)
+
+        with st.expander("🔤 Raw OCR Text (for debugging)"):
+            st.text_area("", all_text, height=200)
+
+# ── Add to alliance tracker ──
+if st.session_state.last_player:
+    st.subheader("3️⃣ Add to Alliance Tracker")
+    player_name = st.session_state.last_player.get('Player Name', 'Unknown')
+    st.write(f"Ready to add: **{player_name}**")
+
+    if st.button(f"➕ Add {player_name} to Alliance Tracker"):
+        st.session_state.alliance_df, excel_buf = save_to_excel(
+            st.session_state.alliance_df,
+            st.session_state.last_player
+        )
+        st.session_state.last_player = None
+        st.success(f"✅ {player_name} added! Total players: {len(st.session_state.alliance_df)}")
+        st.download_button(
+            label="⬇️ Download Alliance Tracker Excel",
+            data=excel_buf,
+            file_name="alliance_tracker.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        )
+
+# ── View & download current tracker ──
+if not st.session_state.alliance_df.empty:
+    st.subheader(f"📊 Alliance Tracker ({len(st.session_state.alliance_df)} players)")
+    st.dataframe(st.session_state.alliance_df, use_container_width=True)
+
+    _, dl_buf = save_to_excel(st.session_state.alliance_df, {})
+    # Remove the empty row we just added
+    temp_df = st.session_state.alliance_df.copy()
+    buf2 = io.BytesIO()
+    with pd.ExcelWriter(buf2, engine='openpyxl') as writer:
+        temp_df.to_excel(writer, index=False, sheet_name='Alliance Stats')
+    buf2.seek(0)
 
     st.download_button(
-        label="⬇️ Download Battle Report as Excel",
-        data=excel_buf,
-        file_name="battle_report.xlsx",
+        label="⬇️ Download Full Alliance Tracker",
+        data=buf2,
+        file_name="alliance_tracker.xlsx",
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-    )
+        )
