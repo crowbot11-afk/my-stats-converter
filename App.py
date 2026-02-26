@@ -316,14 +316,12 @@ with tab2:
         else:
             sel_idx = 0
 
-        with st.form("form_select_player"):
-            chosen = st.selectbox("Player", options=player_options, index=sel_idx)
-            player_confirmed = st.form_submit_button("✅ Confirm Player")
+        # Use key= so Streamlit tracks the value across reruns automatically
+        # Store result directly — rerun is unavoidable in Streamlit but state persists
+        chosen = st.selectbox("Player", options=player_options, index=sel_idx, key="tab2_player_select")
+        st.session_state.selected_player = st.session_state.tab2_player_select
 
-        if player_confirmed:
-            st.session_state.selected_player = chosen
-
-        player_name = st.session_state.selected_player if st.session_state.selected_player and st.session_state.selected_player != "-- select player --" else ""
+        player_name = st.session_state.selected_player if st.session_state.selected_player != "-- select player --" else ""
 
         if player_name:
             existing_names = st.session_state.df['Player Name'].astype(str).str.strip().tolist() if not st.session_state.df.empty else []
