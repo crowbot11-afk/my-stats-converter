@@ -4,13 +4,12 @@ import pytesseract
 from PIL import Image
 import io
 import re
-from openpyxl import Workbook
 from openpyxl.styles import Font, PatternFill, Alignment
 from openpyxl.utils import get_column_letter
 
 st.set_page_config(page_title="Alliance Battle Tracker", page_icon="⚔️", layout="centered")
 st.title("⚔️ Alliance Battle Report Tracker")
-st.write("Upload all screenshots for one player → extract stats → add to Alliance Excel.")
+st.write("Enter player name, upload their screenshots, extract stats, add to Alliance Excel.")
 
 KNOWN_STATS = [
     "Infantry Attack", "Infantry Defense", "Infantry HP",
@@ -42,30 +41,12 @@ def ocr_image(img):
 def extract_all(all_text):
     data = {}
 
-    # Player name: OCR renders ^^Name^^ as ""Name"" or ""Name™ etc
-    m = re.search(r'[""]{1,2}([A-Za-z0-9_~\-. ^]+?)[""™]{1,2}', all_text)
+    # March Size (Total Army)
+    m = re.search(r'Total Army\s+([\d,]+)', all_text)
     if m:
-        name = m.group(1).strip().strip('^').strip()
-        if len(name) > 1:
-            data['Player Name'] = name
+        data['March Size'] = m.group(1).replace(',', '')
 
-    # Result
-    m = re.search(r'\b(Victory|Defeat)\b', all_text, re.I)
-    if m:
-        data['Result'] = m.group(1)
-
-    # Power Loss (take the attacker's, which is first)
-    m = re.search(r'Power\s*Loss\s+([-\d,]+)', all_text)
-    if m:
-        data['Power Loss'] = m.group(1).replace(',', '')
-
-    # Battle stats (first occurrence = attacker)
-    for stat in ['Total Army', 'Kills', 'Losses', 'Wounded', 'Survivors', 'Battlers']:
-        m = re.search(rf'{stat}\s+([\d,]+)', all_text)
-        if m:
-            data[stat] = m.group(1).replace(',', '')
-
-    # All Stats Bonus - match each known stat precisely
+    # All Stats Bonus
     for stat in KNOWN_STATS:
         pattern = re.escape(stat).replace(r'\ ', r'\s+')
         m = re.search(pattern + r'\s+([\d,]+\.?\d*%?)', all_text, re.I)
@@ -170,8 +151,12 @@ if existing_file:
     st.session_state.alliance_df = pd.read_excel(existing_file)
     st.success(f"✅ Loaded {len(st.session_state.alliance_df)} existing players.")
 
-# Step 2: Upload screenshots
-st.subheader("2️⃣ Upload All Screenshots for One Player")
+# Step 2: Enter player name manually
+st.subheader("2️⃣ Enter Player Name")
+player_name_input = st.text_input("Type the player's in-game name", placeholder="e.g. Fighterrulez")
+
+# Step 3: Upload screenshots
+st.subheader("3️⃣ Upload All Screenshots for This Player")
 uploaded_files = st.file_uploader(
     "Select all screenshots at once",
     type=["png", "jpg", "jpeg", "webp"],
@@ -179,8 +164,8 @@ uploaded_files = st.file_uploader(
     key="shots"
 )
 
-if uploaded_files:
-    st.write(f"📸 {len(uploaded_files)} screenshots ready")
+if uploaded_files and player_name_input:
+    st.write(f"📸 {len(uploaded_files)} screenshots ready for **{player_name_input}**")
 
     if st.button("🔍 Extract Stats"):
         all_text = ""
@@ -191,26 +176,21 @@ if uploaded_files:
             progress.progress((i + 1) / len(uploaded_files))
 
         extracted = extract_all(all_text)
+        extracted = {'Player Name': player_name_input, **extracted}
         st.session_state.last_data = extracted
 
-        st.subheader("✅ Extracted Data")
+        st.subheader("✅ Extracted Data Preview")
 
-        player_keys = ['Player Name', 'Result', 'Power Loss', 'Battlers',
-                       'Total Army', 'Kills', 'Losses', 'Wounded', 'Survivors']
-        other_keys = ['Elder Titan Tier', 'Titan Talent Level', 'Beast Tier',
+        build_keys = ['March Size', 'Elder Titan Tier', 'Titan Talent Level', 'Beast Tier',
                       'Beast Talent Level', 'Beast Skill Level', 'Totem Level',
                       'Special Stats Level', 'Jewels Level', 'Zodiac Green', 'Zodiac White',
                       'Northern Green', 'Colossus Level', 'Emblem Level']
 
         col1, col2 = st.columns(2)
         with col1:
-            st.markdown("**⚔️ Battle Info**")
-            battle_data = {k: extracted.get(k, '—') for k in player_keys}
-            st.dataframe(pd.DataFrame(list(battle_data.items()), columns=['Field', 'Value']), use_container_width=True)
-        with col2:
-            st.markdown("**🏆 Player Build**")
-            other_data = {k: extracted.get(k, '—') for k in other_keys if k in extracted}
-            st.dataframe(pd.DataFrame(list(other_data.items()), columns=['Field', 'Value']), use_container_width=True)
+            st.markdown("**🏰 Build Info**")
+            build_data = {k: extracted.get(k, '—') for k in build_keys if k in extracted}
+            st.dataframe(pd.DataFrame(list(build_data.items()), columns=['Field', 'Value']), use_container_width=True)
 
         st.markdown("**📊 Stats Bonus**")
         stats_data = {k: extracted[k] for k in KNOWN_STATS if k in extracted}
@@ -222,30 +202,31 @@ if uploaded_files:
                 st.dataframe(pd.DataFrame(items[:half], columns=['Stat', 'Value']), use_container_width=True)
             with c2:
                 st.dataframe(pd.DataFrame(items[half:], columns=['Stat', 'Value']), use_container_width=True)
-            st.success(f"✅ {len(stats_data)}/47 stats extracted successfully!")
+            st.success(f"✅ {len(stats_data)}/47 stats extracted!")
         else:
-            st.warning("No stats bonus found — check raw text below.")
+            st.warning("No stats found — check raw OCR text below.")
 
-        with st.expander("🔤 Raw OCR Text (for debugging)"):
-            st.text_area("", all_text, height=300)
+        with st.expander("🔤 Raw OCR Text (debugging)"):
+            st.text_area("", all_text, height=250)
 
-# Step 3: Add to tracker
+elif uploaded_files and not player_name_input:
+    st.warning("⚠️ Please enter the player name above before extracting.")
+
+# Step 4: Add to tracker
 if st.session_state.last_data:
-    st.subheader("3️⃣ Add to Alliance Tracker")
-    player_name = st.session_state.last_data.get('Player Name', 'Unknown Player')
-    total_fields = len(st.session_state.last_data)
-    st.write(f"Ready to add: **{player_name}** — {total_fields} fields extracted")
+    st.subheader("4️⃣ Add to Alliance Tracker")
+    pname = st.session_state.last_data.get('Player Name', '')
+    st.write(f"Ready to add: **{pname}** — {len(st.session_state.last_data)} fields")
 
-    if st.button(f"➕ Add {player_name} to Tracker"):
+    if st.button(f"➕ Add {pname} to Tracker"):
         new_row = pd.DataFrame([st.session_state.last_data])
         st.session_state.alliance_df = pd.concat(
             [st.session_state.alliance_df, new_row], ignore_index=True
         )
         st.session_state.last_data = None
-        total = len(st.session_state.alliance_df)
-        st.success(f"✅ Added! Total players in tracker: {total}")
+        st.success(f"✅ {pname} added! Total players: {len(st.session_state.alliance_df)}")
 
-# Step 4: View and download
+# Step 5: View and download
 if not st.session_state.alliance_df.empty:
     st.subheader(f"📊 Alliance Tracker — {len(st.session_state.alliance_df)} Players")
     st.dataframe(st.session_state.alliance_df, use_container_width=True)
