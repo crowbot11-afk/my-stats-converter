@@ -299,29 +299,26 @@ with tab2:
 
         st.subheader("Select Player")
 
-        # Build options — blank string = nothing selected
-        options = [''] + roster
-        labels = ['-- select player --'] + roster
-
-        # Ensure picked_player is still valid
+        # Ensure picked_player is still valid (e.g. after kick)
         if st.session_state.picked_player not in roster:
             st.session_state.picked_player = ''
 
-        current_idx = options.index(st.session_state.picked_player)
+        # Use key= so radio remembers selection across reruns without index=
+        # Pre-set the key only if it's missing or invalid
+        if 'radio_player' not in st.session_state or st.session_state.radio_player not in (['-- select player --'] + roster):
+            st.session_state.radio_player = st.session_state.picked_player if st.session_state.picked_player in roster else '-- select player --'
 
-        # Radio buttons — never cause a "disappeared" issue because each
-        # option is a standalone widget, not a dropdown that resets on rerun
-        chosen_label = st.radio(
+        st.radio(
             "Player",
-            options=labels,
-            index=current_idx,
-            horizontal=False,
+            options=['-- select player --'] + roster,
+            key='radio_player',
             label_visibility="collapsed"
         )
-        # Map label back to value
-        chosen = '' if chosen_label == '-- select player --' else chosen_label
-        st.session_state.picked_player = chosen
-        player_name = chosen
+
+        # Persist the selection — radio key holds the value reliably
+        chosen = st.session_state.radio_player
+        player_name = chosen if chosen != '-- select player --' else ''
+        st.session_state.picked_player = player_name
 
         if player_name:
             existing = st.session_state.df['Player Name'].astype(str).str.strip().tolist() if not st.session_state.df.empty else []
