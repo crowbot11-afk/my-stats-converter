@@ -262,7 +262,14 @@ with tab1:
             st.session_state.add_msg = ('warning', f"'{name}' is already in the roster.")
         else:
             st.session_state.roster = sorted(st.session_state.roster + [name])
-            st.session_state.add_msg = ('success', f"✅ '{name}' added to roster!")
+            # Auto-create a row with 0 for all stats
+            new_row = {col: 0 for col in ALL_COLUMNS}
+            new_row['Player Name'] = name
+            new_row['March Size'] = 0
+            st.session_state.df = pd.concat(
+                [st.session_state.df, pd.DataFrame([new_row])], ignore_index=True
+            )
+            st.session_state.add_msg = ('success', f"✅ '{name}' added to roster with default stats!")
 
     st.divider()
     st.subheader("Remove (Kick) Player")
