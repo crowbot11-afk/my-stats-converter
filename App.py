@@ -66,20 +66,3 @@ if uploaded_file:
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     )
 ```
-
----
-
-**`requirements.txt`**
-```
-streamlit
-pandas
-pytesseract
-Pillow
-openpyxl
-```
-
----
-
-**`packages.txt`** *(tells Streamlit Cloud to install the system Tesseract binary)*
-```
-tesseract-ocr
