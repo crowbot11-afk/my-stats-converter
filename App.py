@@ -323,19 +323,25 @@ with tab2:
 
         st.subheader("Select Player")
 
+        options = ["-- select player --"] + roster
+
+        # Reset if player was kicked
         if st.session_state.chosen_player not in roster:
             st.session_state.chosen_player = ''
 
-        options = ["-- select player --"] + roster
-        sel_index = (roster.index(st.session_state.chosen_player) + 1) if st.session_state.chosen_player in roster else 0
+        cur = st.session_state.chosen_player if st.session_state.chosen_player in roster else '-- select player --'
 
-        # No key= on selectbox so Streamlit always uses index= and never resets it
-        chosen = st.selectbox("Select player", options=options, index=sel_index)
+        def on_player_change():
+            v = st.session_state._sel_player
+            st.session_state.chosen_player = v if v != '-- select player --' else ''
 
-        # Only update chosen_player if user actually changed the selection
-        new_choice = chosen if chosen != "-- select player --" else ''
-        if new_choice != st.session_state.chosen_player:
-            st.session_state.chosen_player = new_choice
+        st.selectbox(
+            "Select player",
+            options=options,
+            index=options.index(cur),
+            key='_sel_player',
+            on_change=on_player_change
+        )
 
         player_name = st.session_state.chosen_player
 
