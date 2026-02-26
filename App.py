@@ -311,14 +311,12 @@ with tab2:
         st.subheader("Select Player")
         player_options = ["-- select player --"] + current_roster
 
-        if st.session_state.selected_player in player_options:
-            sel_idx = player_options.index(st.session_state.selected_player)
-        else:
-            sel_idx = 0
+        # Sync key to match selected_player so they never fight
+        # Only set it if it's missing or points to a player no longer in roster
+        if "tab2_player_select" not in st.session_state or st.session_state.tab2_player_select not in player_options:
+            st.session_state.tab2_player_select = st.session_state.selected_player if st.session_state.selected_player in player_options else "-- select player --"
 
-        # Use key= so Streamlit tracks the value across reruns automatically
-        # Store result directly — rerun is unavoidable in Streamlit but state persists
-        chosen = st.selectbox("Player", options=player_options, index=sel_idx, key="tab2_player_select")
+        st.selectbox("Player", options=player_options, key="tab2_player_select")
         st.session_state.selected_player = st.session_state.tab2_player_select
 
         player_name = st.session_state.selected_player if st.session_state.selected_player != "-- select player --" else ""
