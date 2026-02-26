@@ -53,7 +53,7 @@ defaults = {
     'add_msg': None,
     'kick_msg': None,
     'save_msg': None,
-    'picked_player': '',   # single source of truth for selected player in tab2
+    'radio_player': '-- select player --',  # persists player selection in tab2
 }
 for k, v in defaults.items():
     if k not in st.session_state:
@@ -213,7 +213,7 @@ with tab1:
         df, roster = load_excel(uploaded)
         st.session_state.df = df
         st.session_state.roster = roster
-        st.session_state.picked_player = ''
+        st.session_state.radio_player = '-- select player --'
         st.success(f"✅ Loaded {len(df)} players, {len(roster)} in roster.")
 
     st.info(f"**{len(st.session_state.df)}** players with data · **{len(st.session_state.roster)}** in roster")
@@ -229,7 +229,7 @@ with tab1:
         else:
             st.warning(txt)
 
-    with st.form("form_add", clear_on_submit=True):
+    with st.form("form_add"):
         new_name = st.text_input("Player name", placeholder="Type name here")
         if st.form_submit_button("➕ Add to Roster"):
             name = new_name.strip()
@@ -255,7 +255,7 @@ with tab1:
             st.warning(txt)
 
     if st.session_state.roster:
-        with st.form("form_kick", clear_on_submit=True):
+        with st.form("form_kick"):
             to_kick = st.selectbox("Select player to remove", ["-- select --"] + st.session_state.roster)
             if st.form_submit_button("🗑️ Remove & Delete Their Data"):
                 if to_kick == "-- select --":
@@ -267,8 +267,8 @@ with tab1:
                         st.session_state.df = st.session_state.df[
                             st.session_state.df['Player Name'].astype(str).str.strip().str.lower() != to_kick.lower()
                         ].reset_index(drop=True)
-                    if st.session_state.picked_player.lower() == to_kick.lower():
-                        st.session_state.picked_player = ''
+                    if st.session_state.get('radio_player','') == to_kick:
+                        st.session_state.radio_player = '-- select player --'
                     st.session_state.kick_msg = ('success', f"✅ '{to_kick}' removed.")
     else:
         st.info("No players in roster yet.")
@@ -299,26 +299,20 @@ with tab2:
 
         st.subheader("Select Player")
 
-        # Ensure picked_player is still valid (e.g. after kick)
-        if st.session_state.picked_player not in roster:
-            st.session_state.picked_player = ''
-
-        # Use key= so radio remembers selection across reruns without index=
-        # Pre-set the key only if it's missing or invalid
-        if 'radio_player' not in st.session_state or st.session_state.radio_player not in (['-- select player --'] + roster):
-            st.session_state.radio_player = st.session_state.picked_player if st.session_state.picked_player in roster else '-- select player --'
+        # radio_player key persists via Streamlit session state automatically.
+        # We only ever write to it here if the value is no longer valid (kicked player).
+        valid_options = ['-- select player --'] + roster
+        if st.session_state.get('radio_player', '-- select player --') not in valid_options:
+            st.session_state.radio_player = '-- select player --'
 
         st.radio(
             "Player",
-            options=['-- select player --'] + roster,
+            options=valid_options,
             key='radio_player',
             label_visibility="collapsed"
         )
 
-        # Persist the selection — radio key holds the value reliably
-        chosen = st.session_state.radio_player
-        player_name = chosen if chosen != '-- select player --' else ''
-        st.session_state.picked_player = player_name
+        player_name = '' if st.session_state.radio_player == '-- select player --' else st.session_state.radio_player
 
         if player_name:
             existing = st.session_state.df['Player Name'].astype(str).str.strip().tolist() if not st.session_state.df.empty else []
