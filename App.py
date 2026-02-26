@@ -135,7 +135,6 @@ def build_excel():
     df = df.reindex(columns=ALL_COLUMNS)
 
     wb = Workbook()
-
     ws_r = wb.active
     ws_r.title = 'Roster'
     ws_r['A1'] = 'Player Names'
@@ -202,6 +201,39 @@ def load_excel(file):
         roster = df['Player Name'].dropna().astype(str).str.strip().tolist()
     return df, roster
 
+# ── Callback for adding a player to roster ──
+def cb_add_to_roster():
+    name = st.session_state.get('new_name_input', '').strip()
+    if not name:
+        st.session_state['roster_msg'] = ('warning', 'Type a name first.')
+    elif name in st.session_state.roster:
+        st.session_state['roster_msg'] = ('warning', f"'{name}' is already in the roster.")
+    else:
+        st.session_state.roster.append(name)
+        st.session_state['roster_msg'] = ('success', f"✅ '{name}' added!")
+
+# ── Callback for removing a player ──
+def cb_kick_player():
+    to_kick = st.session_state.get('kick_sel', '-- select --')
+    if to_kick == '-- select --':
+        st.session_state['kick_msg'] = ('warning', 'Select a player.')
+    else:
+        st.session_state.roster.remove(to_kick)
+        if 'Player Name' in st.session_state.df.columns:
+            st.session_state.df = st.session_state.df[
+                st.session_state.df['Player Name'].astype(str).str.strip() != to_kick
+            ].reset_index(drop=True)
+        if st.session_state.selected_player == to_kick:
+            st.session_state.selected_player = "-- select player --"
+        st.session_state['kick_msg'] = ('success', f"✅ '{to_kick}' removed.")
+
+# ── Callback for player selectbox in Tab 2 ──
+def cb_player_sel():
+    st.session_state.selected_player = st.session_state['_player_sel_widget']
+    # Clear extracted data if player changed
+    if st.session_state.extracted and st.session_state.extracted.get('_player') != st.session_state.selected_player:
+        st.session_state.extracted = None
+
 # ══════════════════════════════════════════
 # TAB LAYOUT
 # ══════════════════════════════════════════
@@ -217,6 +249,7 @@ with tab1:
         df, roster = load_excel(uploaded)
         st.session_state.df = df
         st.session_state.roster = roster
+        st.session_state.selected_player = "-- select player --"
         st.success(f"✅ Loaded {len(df)} players, {len(roster)} in roster.")
 
     n_data = len(st.session_state.df)
@@ -225,33 +258,33 @@ with tab1:
 
     st.divider()
     st.subheader("Add New Player to Roster")
-    new_name = st.text_input("Player name", key="new_name_input", placeholder="Type name here")
-    if st.button("➕ Add to Roster", key="btn_add"):
-        name = new_name.strip()
-        if not name:
-            st.warning("Type a name first.")
-        elif name in st.session_state.roster:
-            st.warning(f"'{name}' is already in the roster.")
+    st.text_input("Player name", key="new_name_input", placeholder="Type name here")
+    st.button("➕ Add to Roster", key="btn_add", on_click=cb_add_to_roster)
+
+    # Show feedback messages
+    if 'roster_msg' in st.session_state:
+        level, msg = st.session_state.pop('roster_msg')
+        if level == 'warning':
+            st.warning(msg)
         else:
-            st.session_state.roster.append(name)
-            st.success(f"✅ '{name}' added! They will now appear in the player dropdown.")
+            st.success(msg)
 
     st.divider()
     st.subheader("Remove (Kick) Player")
     if st.session_state.roster:
-        to_kick = st.selectbox("Select player to remove", ["-- select --"] + sorted(st.session_state.roster), key="kick_sel")
-        if st.button("🗑️ Remove & Delete Their Data", key="btn_kick"):
-            if to_kick == "-- select --":
-                st.warning("Select a player.")
+        st.selectbox(
+            "Select player to remove",
+            ["-- select --"] + sorted(st.session_state.roster),
+            key="kick_sel"
+        )
+        st.button("🗑️ Remove & Delete Their Data", key="btn_kick", on_click=cb_kick_player)
+
+        if 'kick_msg' in st.session_state:
+            level, msg = st.session_state.pop('kick_msg')
+            if level == 'warning':
+                st.warning(msg)
             else:
-                st.session_state.roster.remove(to_kick)
-                if 'Player Name' in st.session_state.df.columns:
-                    st.session_state.df = st.session_state.df[
-                        st.session_state.df['Player Name'].astype(str).str.strip() != to_kick
-                    ].reset_index(drop=True)
-                if st.session_state.selected_player == to_kick:
-                    st.session_state.selected_player = "-- select player --"
-                st.success(f"✅ '{to_kick}' removed from roster and data deleted.")
+                st.success(msg)
     else:
         st.info("No players in roster yet.")
 
@@ -274,21 +307,21 @@ with tab2:
         st.subheader("Select Player")
         player_options = ["-- select player --"] + current_roster
 
-        # Restore previously selected player by index so it persists across reruns
-        if st.session_state.selected_player in player_options:
-            sel_index = player_options.index(st.session_state.selected_player)
-        else:
-            sel_index = 0
+        # Validate stored selection is still in roster
+        if st.session_state.selected_player not in player_options:
+            st.session_state.selected_player = "-- select player --"
 
-        player_sel = st.selectbox(
+        sel_index = player_options.index(st.session_state.selected_player)
+
+        st.selectbox(
             "Player",
             options=player_options,
             index=sel_index,
-            key="player_sel"
+            key="_player_sel_widget",
+            on_change=cb_player_sel
         )
-        # Save selection to session state immediately
-        st.session_state.selected_player = player_sel
-        player_name = player_sel if player_sel != "-- select player --" else ""
+
+        player_name = st.session_state.selected_player if st.session_state.selected_player != "-- select player --" else ""
 
         if player_name:
             existing_names = st.session_state.df['Player Name'].astype(str).tolist() if not st.session_state.df.empty and 'Player Name' in st.session_state.df.columns else []
@@ -352,7 +385,7 @@ with tab2:
             with st.expander("Raw OCR"):
                 st.text_area("", all_text, height=150)
 
-        # Save button — always visible once extracted for this player
+        # Save button
         if st.session_state.extracted and st.session_state.extracted.get('_player') == player_name and player_name:
             st.divider()
             existing_names = st.session_state.df['Player Name'].astype(str).tolist() if not st.session_state.df.empty and 'Player Name' in st.session_state.df.columns else []
