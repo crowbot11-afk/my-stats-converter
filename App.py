@@ -308,11 +308,7 @@ with tab1:
 # TAB 2
 # ─────────────────────────────────────────
 with tab2:
-    # Always read fresh from disk so Tab 2 always sees latest roster
-    roster, df_disk = load_persisted()
-    # Sync session state with disk
-    st.session_state.roster = roster
-    st.session_state.df = df_disk
+    roster = st.session_state.roster
 
     if not roster:
         st.info("Go to **Load & Roster** tab and add players first.")
@@ -330,17 +326,16 @@ with tab2:
         if st.session_state.chosen_player not in roster:
             st.session_state.chosen_player = ''
 
-        # Selectbox — now safe because roster comes from disk not session state
-        chosen = st.selectbox(
-            "Select player",
-            options=["-- select player --"] + roster,
-            index=(roster.index(st.session_state.chosen_player) + 1) if st.session_state.chosen_player in roster else 0,
-            key="sel_player_tab2"
-        )
-        if chosen != "-- select player --":
-            st.session_state.chosen_player = chosen
-        else:
-            st.session_state.chosen_player = ''
+        options = ["-- select player --"] + roster
+        sel_index = (roster.index(st.session_state.chosen_player) + 1) if st.session_state.chosen_player in roster else 0
+
+        # No key= on selectbox so Streamlit always uses index= and never resets it
+        chosen = st.selectbox("Select player", options=options, index=sel_index)
+
+        # Only update chosen_player if user actually changed the selection
+        new_choice = chosen if chosen != "-- select player --" else ''
+        if new_choice != st.session_state.chosen_player:
+            st.session_state.chosen_player = new_choice
 
         player_name = st.session_state.chosen_player
 
