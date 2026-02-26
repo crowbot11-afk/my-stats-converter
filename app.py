@@ -65,7 +65,8 @@ KNOWN_STATS = [
 ALL_COLUMNS = ["Player Name", "March Size"] + KNOWN_STATS + [
     "Elder Titan Tier", "Titan Talent Level", "Beast Tier", "Beast Talent Level",
     "Beast Skill Level", "Totem Level", "Special Stats Level", "Jewels Level",
-    "Zodiac Green", "Zodiac White", "Northern Green", "Colossus Level", "Emblem Level"
+    "Zodiac Green", "Zodiac White", "Northern Green", "Colossus Level", "Emblem Level",
+    "Frontline", "Backline"
 ]
 
 TOTAL_ROWS = 100
@@ -106,6 +107,8 @@ if "loaded" not in st.session_state:
     st.session_state.save_msg = None
     st.session_state.chosen_player = ""
     st.session_state.last_loaded_file = None
+    st.session_state.frontline = "Infantry"
+    st.session_state.backline = "Archer"
     st.session_state.loaded = True
 
 
@@ -350,6 +353,31 @@ with tab2:
             else:
                 st.info("Selected: " + player_name)
         st.divider()
+        st.subheader("Role Selection")
+        role_col1, role_col2 = st.columns(2)
+        with role_col1:
+            st.markdown("**Frontline**")
+            frontline = st.radio(
+                "Frontline",
+                options=["Infantry", "Cavalry"],
+                index=0 if st.session_state.frontline == "Infantry" else 1,
+                horizontal=True,
+                key="frontline_radio",
+                label_visibility="collapsed"
+            )
+            st.session_state.frontline = frontline
+        with role_col2:
+            st.markdown("**Backline**")
+            backline = st.radio(
+                "Backline",
+                options=["Archer", "Mage"],
+                index=0 if st.session_state.backline == "Archer" else 1,
+                horizontal=True,
+                key="backline_radio",
+                label_visibility="collapsed"
+            )
+            st.session_state.backline = backline
+        st.divider()
         st.subheader("Upload Screenshots")
         screenshots = st.file_uploader(
             "Select all screenshots at once",
@@ -432,6 +460,8 @@ with tab2:
             label = "Update " + player_name if has_real_data else "Save " + player_name
             if st.button(label, type="primary", use_container_width=True):
                 data_to_save = {k: v for k, v in st.session_state.extracted.items() if k != "_player"}
+                data_to_save["Frontline"] = st.session_state.frontline
+                data_to_save["Backline"] = st.session_state.backline
                 action = save_player(player_name, data_to_save)
                 persist()
                 df_verify = st.session_state.df
@@ -442,30 +472,4 @@ with tab2:
                         and str(df_verify[v_mask].iloc[0].get(c, 0)) not in ("0", "0.0", "", "nan", "None")
                     )
                     verb = "Updated" if action == "updated" else "Saved"
-                    st.session_state.save_msg = ("success", verb + " " + player_name + " - " + str(saved_fields) + " fields stored.")
-                else:
-                    st.session_state.save_msg = ("warning", "Save failed for " + player_name + ". Please try again.")
-                st.session_state.extracted = None
-                st.session_state.upload_key += 1
-                st.rerun()
-
-# TAB 3
-with tab3:
-    st.subheader("Download Alliance Tracker")
-    st.write(
-        str(len(st.session_state.df)) + " players with data / "
-        + str(len(st.session_state.roster)) + " in roster / "
-        + str(TOTAL_ROWS) + " rows in Excel"
-    )
-    if len(st.session_state.df) > 0:
-        with st.expander("Preview data"):
-            st.dataframe(st.session_state.df, use_container_width=True)
-    excel_buf = build_excel()
-    st.download_button(
-        label="Download alliance_tracker.xlsx",
-        data=excel_buf,
-        file_name="alliance_tracker.xlsx",
-        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        use_container_width=True
-    )
-    st.caption("Save to Google Drive. Next session upload it here to continue.")
+                    st.session_state.save_msg = ("success", verb + " " + player_name + " - " + str(saved_fields) + "
