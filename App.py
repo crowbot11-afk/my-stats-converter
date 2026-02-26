@@ -55,6 +55,27 @@ if uploaded_file:
         data=buffer,
         file_name="game_stats.xlsx",
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    )        parts = re.split(r'\s{2,}|\t|:|\\|', line, maxsplit=1)
+        if len(parts) == 2:
+            rows.append({"Stat": parts[0].strip(), "Value": parts[1].strip()})
+        else:
+            rows.append({"Stat": line, "Value": ""})
+
+    df = pd.DataFrame(rows)
+
+    st.subheader("📊 Parsed Table")
+    edited_df = st.data_editor(df, num_rows="dynamic", use_container_width=True)
+
+    buffer = io.BytesIO()
+    with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
+        edited_df.to_excel(writer, index=False, sheet_name="Game Stats")
+    buffer.seek(0)
+
+    st.download_button(
+        label="⬇️ Download as Excel",
+        data=buffer,
+        file_name="game_stats.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     )    # Split into lines, filter blanks
     lines = [line.strip() for line in raw_text.splitlines() if line.strip()]
 
