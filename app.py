@@ -82,6 +82,7 @@ if 'loaded' not in st.session_state:
     st.session_state.kick_msg = None
     st.session_state.save_msg = None
     st.session_state.chosen_player = ''
+    st.session_state.last_loaded_file = None
     st.session_state.loaded = True
 
 
@@ -237,11 +238,12 @@ for msg_key in ('add_msg', 'kick_msg', 'save_msg'):
 # ════════════════════════════════════════
 with st.expander("📁 Load Existing Tracker", expanded=False):
     uploaded = st.file_uploader("Upload alliance_tracker.xlsx", type=["xlsx"], key="load")
-    if uploaded:
+    if uploaded and uploaded.name != st.session_state.last_loaded_file:
         df, roster = load_excel(uploaded)
         st.session_state.df = df
         st.session_state.roster = roster
         st.session_state.chosen_player = ''
+        st.session_state.last_loaded_file = uploaded.name
         persist()
         st.success(f"Loaded {len(df)} players, {len(roster)} in roster.")
 
