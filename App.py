@@ -4,12 +4,12 @@ import pytesseract
 from PIL import Image
 import io
 import re
+import requests
 from openpyxl.styles import Font, PatternFill, Alignment
 from openpyxl.utils import get_column_letter
 
 st.set_page_config(page_title="Alliance Battle Tracker", page_icon="⚔️", layout="centered")
 st.title("⚔️ Alliance Battle Report Tracker")
-st.write("Enter player name, upload their screenshots, extract stats, add to Alliance Excel.")
 
 KNOWN_STATS = [
     "Infantry Attack", "Infantry Defense", "Infantry HP",
@@ -40,20 +40,14 @@ def ocr_image(img):
 
 def extract_all(all_text):
     data = {}
-
-    # March Size (Total Army)
     m = re.search(r'Total Army\s+([\d,]+)', all_text)
     if m:
         data['March Size'] = m.group(1).replace(',', '')
-
-    # All Stats Bonus
     for stat in KNOWN_STATS:
         pattern = re.escape(stat).replace(r'\ ', r'\s+')
         m = re.search(pattern + r'\s+([\d,]+\.?\d*%?)', all_text, re.I)
         if m:
             data[stat] = m.group(1).strip()
-
-    # Elder Titan tier
     m = re.search(r'Evolution:\s*Titan Tier\s*(III|II|I|lll|ll|l|\d)', all_text, re.I)
     if m:
         tier = m.group(1).replace('lll','III').replace('ll','II').replace('l','I')
@@ -61,8 +55,6 @@ def extract_all(all_text):
     talent_levels = re.findall(r'Total Talent Level:\s*(\d+)', all_text)
     if talent_levels:
         data['Titan Talent Level'] = talent_levels[0]
-
-    # Beast
     m = re.search(r'[Ee]volution:\s*Tier\s*(\d+)', all_text)
     if m:
         data['Beast Tier'] = m.group(1)
@@ -71,21 +63,15 @@ def extract_all(all_text):
     m = re.search(r'Total [Ss]kill Level:\s*(\d+)', all_text)
     if m:
         data['Beast Skill Level'] = m.group(1)
-
-    # Totem
     m = re.search(r'(?:Level|Lv)[:\s.]*\s*(Lv\.?\s*\d+)', all_text, re.I)
     if m:
         data['Totem Level'] = re.sub(r'\s+', '', m.group(1))
-
-    # Equip
     m = re.search(r'Total Special Stats Level:\s*(\d+)', all_text)
     if m:
         data['Special Stats Level'] = m.group(1)
     m = re.search(r'Total Jewels Level:\s*(\d+)', all_text)
     if m:
         data['Jewels Level'] = m.group(1)
-
-    # Star Palace
     m = re.search(r'Zodiac Palace.*?Green Amount:\s*(\d+).*?White Amount:\s*(\d+)', all_text, re.S)
     if m:
         data['Zodiac Green'] = m.group(1)
@@ -93,17 +79,12 @@ def extract_all(all_text):
     m = re.search(r'Northern Palace.*?Green Amount:\s*(\d+)', all_text, re.S)
     if m:
         data['Northern Green'] = m.group(1)
-
-    # Colossus
     m = re.search(r'Colossus.*?Total Level:\s*(\d+)', all_text, re.S)
     if m:
         data['Colossus Level'] = m.group(1)
-
-    # Emblem
     m = re.search(r'Emblem.*?Total Level:\s*(\d+)', all_text, re.S)
     if m:
         data['Emblem Level'] = m.group(1)
-
     return data
 
 def build_excel(df):
@@ -111,122 +92,186 @@ def build_excel(df):
     with pd.ExcelWriter(buf, engine='openpyxl') as writer:
         df.to_excel(writer, index=False, sheet_name='Alliance Stats')
         ws = writer.sheets['Alliance Stats']
-
         header_fill = PatternFill('solid', start_color='8B0000')
         header_font = Font(name='Arial', bold=True, color='FFFFFF', size=10)
         alt_fill = PatternFill('solid', start_color='FFF3E0')
-
         for cell in ws[1]:
             cell.fill = header_fill
             cell.font = header_font
             cell.alignment = Alignment(horizontal='center', vertical='center', wrap_text=True)
-
         for i, row in enumerate(ws.iter_rows(min_row=2), start=2):
             for cell in row:
                 cell.font = Font(name='Arial', size=10)
                 cell.alignment = Alignment(horizontal='center', vertical='center')
                 if i % 2 == 0:
                     cell.fill = alt_fill
-
         for col in ws.columns:
             max_len = max((len(str(c.value)) if c.value else 0) for c in col)
             ws.column_dimensions[get_column_letter(col[0].column)].width = min(max_len + 3, 30)
-
         ws.row_dimensions[1].height = 30
         ws.freeze_panes = 'B2'
-
     buf.seek(0)
     return buf
 
-# Session state
+def gdrive_url_to_direct(url):
+    """Convert any Google Drive share URL to a direct download URL."""
+    # Format: /file/d/FILE_ID/view or /open?id=FILE_ID
+    m = re.search(r'/file/d/([a-zA-Z0-9_-]+)', url)
+    if not m:
+        m = re.search(r'[?&]id=([a-zA-Z0-9_-]+)', url)
+    if m:
+        file_id = m.group(1)
+        return f"https://drive.google.com/uc?export=download&id={file_id}"
+    return None
+
+def load_from_gdrive(url):
+    direct_url = gdrive_url_to_direct(url)
+    if not direct_url:
+        return None, "❌ Could not parse Google Drive URL. Make sure it's a valid share link."
+    try:
+        resp = requests.get(direct_url, timeout=15)
+        if resp.status_code != 200:
+            return None, f"❌ Could not download file (HTTP {resp.status_code}). Make sure sharing is set to 'Anyone with the link'."
+        df = pd.read_excel(io.BytesIO(resp.content))
+        return df, None
+    except Exception as e:
+        return None, f"❌ Error loading file: {str(e)}"
+
+# ── Session state ──
 if 'alliance_df' not in st.session_state:
     st.session_state.alliance_df = pd.DataFrame()
 if 'last_data' not in st.session_state:
     st.session_state.last_data = None
+if 'upload_key' not in st.session_state:
+    st.session_state.upload_key = 0
+if 'ocr_done' not in st.session_state:
+    st.session_state.ocr_done = False
 
-# Step 1: Load existing tracker
-st.subheader("1️⃣ Load Existing Tracker (optional)")
-existing_file = st.file_uploader("Upload existing Alliance Excel to keep adding players", type=["xlsx"], key="existing")
-if existing_file:
-    st.session_state.alliance_df = pd.read_excel(existing_file)
-    st.success(f"✅ Loaded {len(st.session_state.alliance_df)} existing players.")
+# ══════════════════════════════════════════
+# STEP 1: Load existing tracker
+# ══════════════════════════════════════════
+st.subheader("1️⃣ Load Existing Alliance Tracker")
 
-# Step 2: Enter player name manually
-st.subheader("2️⃣ Enter Player Name")
-player_name_input = st.text_input("Type the player's in-game name", placeholder="e.g. Fighterrulez")
+load_method = st.radio("How do you want to load your tracker?",
+    ["Upload Excel file", "Google Drive URL"], horizontal=True)
 
-# Step 3: Upload screenshots
-st.subheader("3️⃣ Upload All Screenshots for This Player")
+if load_method == "Upload Excel file":
+    existing_file = st.file_uploader("Upload your alliance_tracker.xlsx", type=["xlsx"], key="existing")
+    if existing_file:
+        st.session_state.alliance_df = pd.read_excel(existing_file)
+        st.success(f"✅ Loaded {len(st.session_state.alliance_df)} players from file.")
+
+elif load_method == "Google Drive URL":
+    st.info("📋 In Google Drive: right-click your Excel file → Share → 'Anyone with the link' → Copy link")
+    gdrive_url = st.text_input("Paste your Google Drive share link here", placeholder="https://drive.google.com/file/d/...")
+    if gdrive_url and st.button("📥 Load from Google Drive"):
+        with st.spinner("Downloading from Google Drive..."):
+            df, err = load_from_gdrive(gdrive_url)
+        if err:
+            st.error(err)
+        else:
+            st.session_state.alliance_df = df
+            st.success(f"✅ Loaded {len(df)} players from Google Drive!")
+
+if not st.session_state.alliance_df.empty:
+    st.caption(f"Tracker currently has **{len(st.session_state.alliance_df)} players**. Scroll down to add more.")
+
+st.divider()
+
+# ══════════════════════════════════════════
+# STEP 2: Add a new player
+# ══════════════════════════════════════════
+st.subheader("2️⃣ Add New Player")
+
+player_name_input = st.text_input("Player in-game name", placeholder="e.g. Fighterrulez", key="pname")
+
 uploaded_files = st.file_uploader(
-    "Select all screenshots at once",
+    "Upload all screenshots for this player",
     type=["png", "jpg", "jpeg", "webp"],
     accept_multiple_files=True,
-    key="shots"
+    key=f"shots_{st.session_state.upload_key}"
 )
 
-if uploaded_files and player_name_input:
-    st.write(f"📸 {len(uploaded_files)} screenshots ready for **{player_name_input}**")
+col_extract, col_clear = st.columns([2, 1])
 
-    if st.button("🔍 Extract Stats"):
-        all_text = ""
-        progress = st.progress(0)
-        for i, f in enumerate(uploaded_files):
-            img = Image.open(f)
-            all_text += "\n" + ocr_image(img)
-            progress.progress((i + 1) / len(uploaded_files))
+with col_extract:
+    extract_btn = st.button("🔍 Extract Stats", disabled=not (uploaded_files and player_name_input))
 
-        extracted = extract_all(all_text)
-        extracted = {'Player Name': player_name_input, **extracted}
-        st.session_state.last_data = extracted
+with col_clear:
+    if st.button("🗑️ Clear & Start Next Player"):
+        st.session_state.upload_key += 1
+        st.session_state.last_data = None
+        st.session_state.ocr_done = False
+        st.rerun()
 
-        st.subheader("✅ Extracted Data Preview")
+if extract_btn and uploaded_files and player_name_input:
+    all_text = ""
+    progress = st.progress(0)
+    status = st.empty()
+    for i, f in enumerate(uploaded_files):
+        status.write(f"Reading image {i+1}/{len(uploaded_files)}...")
+        img = Image.open(f)
+        all_text += "\n" + ocr_image(img)
+        progress.progress((i + 1) / len(uploaded_files))
+    status.empty()
+    progress.empty()
 
-        build_keys = ['March Size', 'Elder Titan Tier', 'Titan Talent Level', 'Beast Tier',
-                      'Beast Talent Level', 'Beast Skill Level', 'Totem Level',
-                      'Special Stats Level', 'Jewels Level', 'Zodiac Green', 'Zodiac White',
-                      'Northern Green', 'Colossus Level', 'Emblem Level']
+    extracted = extract_all(all_text)
+    extracted = {'Player Name': player_name_input, **extracted}
+    st.session_state.last_data = extracted
+    st.session_state.ocr_done = True
 
-        col1, col2 = st.columns(2)
-        with col1:
-            st.markdown("**🏰 Build Info**")
-            build_data = {k: extracted.get(k, '—') for k in build_keys if k in extracted}
-            st.dataframe(pd.DataFrame(list(build_data.items()), columns=['Field', 'Value']), use_container_width=True)
+    st.success(f"✅ Extracted {len(extracted)-1} fields for **{player_name_input}**")
 
-        st.markdown("**📊 Stats Bonus**")
-        stats_data = {k: extracted[k] for k in KNOWN_STATS if k in extracted}
-        if stats_data:
-            items = list(stats_data.items())
-            half = len(items) // 2 + len(items) % 2
-            c1, c2 = st.columns(2)
-            with c1:
-                st.dataframe(pd.DataFrame(items[:half], columns=['Stat', 'Value']), use_container_width=True)
-            with c2:
-                st.dataframe(pd.DataFrame(items[half:], columns=['Stat', 'Value']), use_container_width=True)
-            st.success(f"✅ {len(stats_data)}/47 stats extracted!")
-        else:
-            st.warning("No stats found — check raw OCR text below.")
+    build_keys = ['March Size', 'Elder Titan Tier', 'Titan Talent Level', 'Beast Tier',
+                  'Beast Talent Level', 'Beast Skill Level', 'Totem Level',
+                  'Special Stats Level', 'Jewels Level', 'Zodiac Green', 'Zodiac White',
+                  'Northern Green', 'Colossus Level', 'Emblem Level']
 
-        with st.expander("🔤 Raw OCR Text (debugging)"):
-            st.text_area("", all_text, height=250)
+    col1, col2 = st.columns(2)
+    with col1:
+        st.markdown("**🏰 Build Info**")
+        build_data = {k: extracted.get(k, '—') for k in build_keys if k in extracted}
+        st.dataframe(pd.DataFrame(list(build_data.items()), columns=['Field','Value']), use_container_width=True)
 
-elif uploaded_files and not player_name_input:
-    st.warning("⚠️ Please enter the player name above before extracting.")
+    st.markdown("**📊 Stats Bonus**")
+    stats_data = {k: extracted[k] for k in KNOWN_STATS if k in extracted}
+    if stats_data:
+        items = list(stats_data.items())
+        half = len(items)//2 + len(items)%2
+        c1, c2 = st.columns(2)
+        with c1:
+            st.dataframe(pd.DataFrame(items[:half], columns=['Stat','Value']), use_container_width=True)
+        with c2:
+            st.dataframe(pd.DataFrame(items[half:], columns=['Stat','Value']), use_container_width=True)
+        st.info(f"📊 {len(stats_data)}/47 stats extracted")
+    else:
+        st.warning("No stats found — check raw OCR text below.")
 
-# Step 4: Add to tracker
+    with st.expander("🔤 Raw OCR Text (debugging)"):
+        st.text_area("", all_text, height=200)
+
+# ── Add to tracker button ──
 if st.session_state.last_data:
-    st.subheader("4️⃣ Add to Alliance Tracker")
     pname = st.session_state.last_data.get('Player Name', '')
-    st.write(f"Ready to add: **{pname}** — {len(st.session_state.last_data)} fields")
-
-    if st.button(f"➕ Add {pname} to Tracker"):
+    st.divider()
+    if st.button(f"➕ Add {pname} to Alliance Tracker", type="primary"):
         new_row = pd.DataFrame([st.session_state.last_data])
         st.session_state.alliance_df = pd.concat(
             [st.session_state.alliance_df, new_row], ignore_index=True
         )
         st.session_state.last_data = None
-        st.success(f"✅ {pname} added! Total players: {len(st.session_state.alliance_df)}")
+        st.session_state.ocr_done = False
+        # Auto-increment upload key so screenshots clear automatically
+        st.session_state.upload_key += 1
+        st.success(f"✅ {pname} added! {len(st.session_state.alliance_df)} players in tracker. Upload next player's screenshots above ⬆️")
+        st.rerun()
 
-# Step 5: View and download
+st.divider()
+
+# ══════════════════════════════════════════
+# STEP 3: View & Download
+# ══════════════════════════════════════════
 if not st.session_state.alliance_df.empty:
     st.subheader(f"📊 Alliance Tracker — {len(st.session_state.alliance_df)} Players")
     st.dataframe(st.session_state.alliance_df, use_container_width=True)
@@ -237,3 +282,4 @@ if not st.session_state.alliance_df.empty:
         file_name="alliance_tracker.xlsx",
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     )
+    st.info("💡 After downloading, re-upload this file next time to keep adding players.")
