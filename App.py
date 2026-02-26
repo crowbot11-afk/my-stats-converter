@@ -53,8 +53,8 @@ if 'extracted' not in st.session_state:
     st.session_state.extracted = None
 if 'upload_key' not in st.session_state:
     st.session_state.upload_key = 0
-if 'add_name_input' not in st.session_state:
-    st.session_state.add_name_input = ""
+if 'selected_player' not in st.session_state:
+    st.session_state.selected_player = "-- select player --"
 
 # ── Helper functions ──
 def ocr_image(img):
@@ -136,7 +136,6 @@ def build_excel():
 
     wb = Workbook()
 
-    # Hidden roster sheet for dropdown
     ws_r = wb.active
     ws_r.title = 'Roster'
     ws_r['A1'] = 'Player Names'
@@ -146,7 +145,6 @@ def build_excel():
 
     ws = wb.create_sheet('Alliance Stats')
 
-    # Header
     h_fill = PatternFill('solid', start_color='8B0000')
     h_font = Font(name='Arial', bold=True, color='FFFFFF', size=10)
     for ci, col in enumerate(ALL_COLUMNS, 1):
@@ -170,7 +168,6 @@ def build_excel():
             c.alignment = Alignment(horizontal='center', vertical='center')
             c.fill = (alt if ri % 2 == 0 else PatternFill()) if has_data else empty
 
-    # Dropdown on col A
     if roster:
         dv = DataValidation(
             type="list",
@@ -206,7 +203,7 @@ def load_excel(file):
     return df, roster
 
 # ══════════════════════════════════════════
-# TAB LAYOUT — cleaner on mobile
+# TAB LAYOUT
 # ══════════════════════════════════════════
 tab1, tab2, tab3 = st.tabs(["📁 Load & Roster", "📸 Add / Update Player", "⬇️ Download"])
 
@@ -252,6 +249,8 @@ with tab1:
                     st.session_state.df = st.session_state.df[
                         st.session_state.df['Player Name'].astype(str).str.strip() != to_kick
                     ].reset_index(drop=True)
+                if st.session_state.selected_player == to_kick:
+                    st.session_state.selected_player = "-- select player --"
                 st.success(f"✅ '{to_kick}' removed from roster and data deleted.")
     else:
         st.info("No players in roster yet.")
@@ -267,7 +266,6 @@ with tab1:
 # TAB 2: Upload + Extract + Save
 # ────────────────────────────────────────
 with tab2:
-    # Always build dropdown from CURRENT roster in session state
     current_roster = sorted(st.session_state.roster)
 
     if not current_roster:
@@ -275,11 +273,24 @@ with tab2:
     else:
         st.subheader("Select Player")
         player_options = ["-- select player --"] + current_roster
-        player_sel = st.selectbox("Player", options=player_options, key="player_sel")
+
+        # Restore previously selected player by index so it persists across reruns
+        if st.session_state.selected_player in player_options:
+            sel_index = player_options.index(st.session_state.selected_player)
+        else:
+            sel_index = 0
+
+        player_sel = st.selectbox(
+            "Player",
+            options=player_options,
+            index=sel_index,
+            key="player_sel"
+        )
+        # Save selection to session state immediately
+        st.session_state.selected_player = player_sel
         player_name = player_sel if player_sel != "-- select player --" else ""
 
         if player_name:
-            # Show current data if exists
             existing_names = st.session_state.df['Player Name'].astype(str).tolist() if not st.session_state.df.empty and 'Player Name' in st.session_state.df.columns else []
             if player_name in existing_names:
                 st.warning(f"⚠️ {player_name} already has data — saving will **replace** it.")
@@ -341,7 +352,7 @@ with tab2:
             with st.expander("Raw OCR"):
                 st.text_area("", all_text, height=150)
 
-        # Save button — always visible once extracted
+        # Save button — always visible once extracted for this player
         if st.session_state.extracted and st.session_state.extracted.get('_player') == player_name and player_name:
             st.divider()
             existing_names = st.session_state.df['Player Name'].astype(str).tolist() if not st.session_state.df.empty and 'Player Name' in st.session_state.df.columns else []
@@ -353,6 +364,7 @@ with tab2:
                 action = save_player(player_name, data_to_save)
                 st.session_state.extracted = None
                 st.session_state.upload_key += 1
+                st.session_state.selected_player = "-- select player --"
                 verb = "Updated" if action == "updated" else "Saved"
                 st.success(f"✅ {verb} **{player_name}**! Tracker has **{len(st.session_state.df)}** players. Go to next player ⬆️")
                 st.rerun()
