@@ -311,17 +311,19 @@ with tab2:
         st.subheader("Select Player")
         player_options = ["-- select player --"] + current_roster
 
-        # Resolve index from stored name
         if st.session_state.selected_player in player_options:
             sel_idx = player_options.index(st.session_state.selected_player)
         else:
             sel_idx = 0
 
-        # NO key= on selectbox — index= is always respected this way
-        chosen = st.selectbox("Player", options=player_options, index=sel_idx)
-        st.session_state.selected_player = chosen
+        with st.form("form_select_player"):
+            chosen = st.selectbox("Player", options=player_options, index=sel_idx)
+            player_confirmed = st.form_submit_button("✅ Confirm Player")
 
-        player_name = chosen if chosen != "-- select player --" else ""
+        if player_confirmed:
+            st.session_state.selected_player = chosen
+
+        player_name = st.session_state.selected_player if st.session_state.selected_player and st.session_state.selected_player != "-- select player --" else ""
 
         if player_name:
             existing_names = st.session_state.df['Player Name'].astype(str).str.strip().tolist() if not st.session_state.df.empty else []
