@@ -221,6 +221,10 @@ def load_excel(file):
 # ══════════════════════════════════════════
 # TABS
 # ══════════════════════════════════════════
+def on_player_change():
+    v = st.session_state._sel_player
+    st.session_state.chosen_player = v if v != '-- select player --' else ''
+
 tab1, tab2, tab3 = st.tabs(["📁 Load & Roster", "📸 Add / Update Player", "⬇️ Download"])
 
 # ─────────────────────────────────────────
@@ -308,9 +312,7 @@ with tab1:
 # TAB 2
 # ─────────────────────────────────────────
 with tab2:
-    roster = st.session_state.roster
-
-    if not roster:
+    if not st.session_state.roster:
         st.info("Go to **Load & Roster** tab and add players first.")
     else:
         if st.session_state.save_msg:
@@ -323,22 +325,17 @@ with tab2:
 
         st.subheader("Select Player")
 
-        options = ["-- select player --"] + roster
-
-        # Reset if player was kicked
-        if st.session_state.chosen_player not in roster:
+        # Always read live from session_state — never cache in local var
+        if st.session_state.chosen_player not in st.session_state.roster:
             st.session_state.chosen_player = ''
 
-        cur = st.session_state.chosen_player if st.session_state.chosen_player in roster else '-- select player --'
-
-        def on_player_change():
-            v = st.session_state._sel_player
-            st.session_state.chosen_player = v if v != '-- select player --' else ''
+        _opts = ["-- select player --"] + st.session_state.roster
+        _cur = st.session_state.chosen_player if st.session_state.chosen_player in st.session_state.roster else '-- select player --'
 
         st.selectbox(
             "Select player",
-            options=options,
-            index=options.index(cur),
+            options=_opts,
+            index=_opts.index(_cur),
             key='_sel_player',
             on_change=on_player_change
         )
