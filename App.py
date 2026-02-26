@@ -62,20 +62,6 @@ if 'kick_msg' not in st.session_state:
 if 'save_msg' not in st.session_state:
     st.session_state.save_msg = None
 
-# ── Handle pending roster add (survives rerun) ──
-if st.session_state.get('_pending_add'):
-    name = st.session_state.pop('_pending_add')
-    if not name:
-        st.session_state.add_msg = ('warning', 'Type a name first.')
-    elif name.lower() in [n.lower() for n in st.session_state.roster]:
-        st.session_state.add_msg = ('warning', f"'{name}' is already in the roster.")
-    else:
-        st.session_state.roster.append(name)
-        st.session_state.roster = sorted(
-            list(set([n.strip() for n in st.session_state.roster if n.strip()]))
-        )
-        st.session_state.add_msg = ('success', f"✅ '{name}' added to roster!")
-
 # ── Normalize roster on every run — dedup, strip, sort ──
 st.session_state.roster = sorted(
     list(set([str(n).strip() for n in st.session_state.roster if str(n).strip()]))
@@ -247,20 +233,24 @@ with tab1:
         else:
             st.warning(txt)
 
-    # FIX: Store the name in session state before rerun so it survives
+    # Form WITHOUT clear_on_submit so rerun doesn't wipe the message
     with st.form("form_add_player"):
         new_name = st.text_input("Player name", placeholder="Type name here")
         submitted = st.form_submit_button("➕ Add to Roster")
 
+    # Logic is OUTSIDE the form block so it runs after form state is committed
     if submitted:
         name = new_name.strip()
         if not name:
             st.session_state.add_msg = ('warning', 'Type a name first.')
-            st.rerun()
+        elif name.lower() in [n.lower() for n in st.session_state.roster]:
+            st.session_state.add_msg = ('warning', f"'{name}' is already in the roster.")
         else:
-            # Save to pending before rerun so the name isn't lost
-            st.session_state['_pending_add'] = name
-            st.rerun()
+            st.session_state.roster.append(name.strip())
+            st.session_state.roster = sorted(
+                list(set([n.strip() for n in st.session_state.roster if n.strip()]))
+            )
+            st.session_state.add_msg = ('success', f"✅ '{name}' added to roster!")
 
     st.divider()
     st.subheader("Remove (Kick) Player")
@@ -291,7 +281,6 @@ with tab1:
                 if st.session_state.selected_player and st.session_state.selected_player.lower() == to_kick.lower():
                     st.session_state.selected_player = None
                 st.session_state.kick_msg = ('success', f"✅ '{to_kick}' removed.")
-            st.rerun()
     else:
         st.info("No players in roster yet.")
 
@@ -328,6 +317,7 @@ with tab2:
         else:
             sel_idx = 0
 
+        # NO key= on selectbox — index= is always respected this way
         chosen = st.selectbox("Player", options=player_options, index=sel_idx)
         st.session_state.selected_player = chosen
 
