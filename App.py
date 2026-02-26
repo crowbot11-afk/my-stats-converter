@@ -311,20 +311,25 @@ with tab2:
         st.subheader("Select Player")
         player_options = ["-- select player --"] + current_roster
 
-        # Sync key to match selected_player so they never fight
-        # Only set it if it's missing or points to a player no longer in roster
-        if "tab2_player_select" not in st.session_state or st.session_state.tab2_player_select not in player_options:
-            st.session_state.tab2_player_select = st.session_state.selected_player if st.session_state.selected_player in player_options else "-- select player --"
+        # If key doesn't exist yet, initialise it to the placeholder
+        if "tab2_player_select" not in st.session_state:
+            st.session_state.tab2_player_select = "-- select player --"
+
+        # If the stored value is no longer in the roster (e.g. player was kicked),
+        # reset to placeholder — but NEVER touch it otherwise so the user's pick survives reruns
+        if st.session_state.tab2_player_select not in player_options:
+            st.session_state.tab2_player_select = "-- select player --"
 
         st.selectbox("Player", options=player_options, key="tab2_player_select")
-        st.session_state.selected_player = st.session_state.tab2_player_select
 
-        player_name = st.session_state.selected_player if st.session_state.selected_player != "-- select player --" else ""
+        player_name = st.session_state.tab2_player_select if st.session_state.tab2_player_select != "-- select player --" else ""
 
         if player_name:
             existing_names = st.session_state.df['Player Name'].astype(str).str.strip().tolist() if not st.session_state.df.empty else []
             if player_name in existing_names:
                 st.warning(f"⚠️ {player_name} already has data — saving will **replace** it.")
+            else:
+                st.success(f"✅ Selected: **{player_name}**")
 
         st.divider()
         st.subheader("Upload Screenshots")
