@@ -53,14 +53,19 @@ if 'extracted' not in st.session_state:
     st.session_state.extracted = None
 if 'upload_key' not in st.session_state:
     st.session_state.upload_key = 0
+if 'selected_player' not in st.session_state:
+    st.session_state.selected_player = None
 if 'add_msg' not in st.session_state:
     st.session_state.add_msg = None
 if 'kick_msg' not in st.session_state:
     st.session_state.kick_msg = None
 if 'save_msg' not in st.session_state:
     st.session_state.save_msg = None
-if 'selected_player' not in st.session_state:
-    st.session_state.selected_player = None
+
+# ── Normalize roster on every run — dedup, strip, sort ──
+st.session_state.roster = sorted(
+    list(set([str(n).strip() for n in st.session_state.roster if str(n).strip()]))
+)
 
 # ── Helper functions ──
 def ocr_image(img):
@@ -219,6 +224,7 @@ with tab1:
     st.divider()
     st.subheader("Add New Player to Roster")
 
+    # Show message from previous submit
     if st.session_state.add_msg:
         lvl, txt = st.session_state.add_msg
         st.session_state.add_msg = None
@@ -227,19 +233,26 @@ with tab1:
         else:
             st.warning(txt)
 
-    with st.form("form_add_player", clear_on_submit=True):
+    # Form WITHOUT clear_on_submit so rerun doesn't wipe the message
+    with st.form("form_add_player"):
         new_name = st.text_input("Player name", placeholder="Type name here")
         submitted = st.form_submit_button("➕ Add to Roster")
-        if submitted:
-            name = new_name.strip()
-            if not name:
-                st.session_state.add_msg = ('warning', 'Type a name first.')
-            elif name in st.session_state.roster:
-                st.session_state.add_msg = ('warning', f"'{name}' is already in the roster.")
-            else:
-                st.session_state.roster.append(name)
-                st.session_state.add_msg = ('success', f"✅ '{name}' added to roster!")
-            st.rerun()
+
+    # Logic is OUTSIDE the form block so it runs after form state is committed
+    if submitted:
+        name = new_name.strip()
+        if not name:
+            st.session_state.add_msg = ('warning', 'Type a name first.')
+        elif name.lower() in [n.lower() for n in st.session_state.roster]:
+            st.session_state.add_msg = ('warning', f"'{name}' is already in the roster.")
+        else:
+            st.session_state.roster.append(name.strip())
+            # Normalize immediately
+            st.session_state.roster = sorted(
+                list(set([n.strip() for n in st.session_state.roster if n.strip()]))
+            )
+            st.session_state.add_msg = ('success', f"✅ '{name}' added to roster!")
+        st.rerun()
 
     st.divider()
     st.subheader("Remove (Kick) Player")
@@ -256,19 +269,21 @@ with tab1:
         with st.form("form_kick_player"):
             to_kick = st.selectbox("Select player to remove",
                                    ["-- select --"] + sorted(st.session_state.roster))
-            if st.form_submit_button("🗑️ Remove & Delete Their Data"):
-                if to_kick == "-- select --":
-                    st.session_state.kick_msg = ('warning', 'Select a player first.')
-                else:
-                    st.session_state.roster.remove(to_kick)
-                    if 'Player Name' in st.session_state.df.columns:
-                        st.session_state.df = st.session_state.df[
-                            st.session_state.df['Player Name'].astype(str).str.strip() != to_kick
-                        ].reset_index(drop=True)
-                    if st.session_state.selected_player == to_kick:
-                        st.session_state.selected_player = None
-                    st.session_state.kick_msg = ('success', f"✅ '{to_kick}' removed.")
-                st.rerun()
+            kick_submitted = st.form_submit_button("🗑️ Remove & Delete Their Data")
+
+        if kick_submitted:
+            if to_kick == "-- select --":
+                st.session_state.kick_msg = ('warning', 'Select a player first.')
+            else:
+                st.session_state.roster = [n for n in st.session_state.roster if n.strip().lower() != to_kick.strip().lower()]
+                if 'Player Name' in st.session_state.df.columns:
+                    st.session_state.df = st.session_state.df[
+                        st.session_state.df['Player Name'].astype(str).str.strip().str.lower() != to_kick.strip().lower()
+                    ].reset_index(drop=True)
+                if st.session_state.selected_player and st.session_state.selected_player.lower() == to_kick.lower():
+                    st.session_state.selected_player = None
+                st.session_state.kick_msg = ('success', f"✅ '{to_kick}' removed.")
+            st.rerun()
     else:
         st.info("No players in roster yet.")
 
@@ -299,21 +314,20 @@ with tab2:
         st.subheader("Select Player")
         player_options = ["-- select player --"] + current_roster
 
-        # Work out which index to show — use stored name to find position
-        current_sel = st.session_state.selected_player
-        if current_sel in player_options:
-            sel_idx = player_options.index(current_sel)
+        # Resolve index from stored name
+        if st.session_state.selected_player in player_options:
+            sel_idx = player_options.index(st.session_state.selected_player)
         else:
             sel_idx = 0
 
-        # NO key on this selectbox — Streamlit will use index= correctly every time
+        # NO key= on selectbox — index= is always respected this way
         chosen = st.selectbox("Player", options=player_options, index=sel_idx)
         st.session_state.selected_player = chosen
 
         player_name = chosen if chosen != "-- select player --" else ""
 
         if player_name:
-            existing_names = st.session_state.df['Player Name'].astype(str).tolist() if not st.session_state.df.empty else []
+            existing_names = st.session_state.df['Player Name'].astype(str).str.strip().tolist() if not st.session_state.df.empty else []
             if player_name in existing_names:
                 st.warning(f"⚠️ {player_name} already has data — saving will **replace** it.")
 
@@ -376,7 +390,7 @@ with tab2:
 
         if st.session_state.extracted and st.session_state.extracted.get('_player') == player_name and player_name:
             st.divider()
-            existing_names = st.session_state.df['Player Name'].astype(str).tolist() if not st.session_state.df.empty else []
+            existing_names = st.session_state.df['Player Name'].astype(str).str.strip().tolist() if not st.session_state.df.empty else []
             is_update = player_name in existing_names
             label = f"🔄 Update {player_name}" if is_update else f"➕ Save {player_name}"
 
